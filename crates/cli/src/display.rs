@@ -21,6 +21,12 @@ macro_rules! outln {
     }};
 }
 
+pub fn out_errors(errors: impl IntoIterator<Item = impl Display>) {
+    for err in errors {
+        outln!("Error: {err}");
+    }
+}
+
 pub trait DisplayList<ID> {
     fn format_project_title_key(&self, project: &Project<ID>, title: TitleConsist, with_parents: bool) -> String;
     fn display_project_title(

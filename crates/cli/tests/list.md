@@ -345,3 +345,26 @@ List steps of 1 project
 - task B-2
 - task B-1
 ```
+
+## List with missing project path
+
+```sh
+$ echo r#"
+[project."project A"]
+path = "project A"
+
+[project."project B"]
+path = "non-existent"
+"# > "todo.toml"
+```
+
+```sh
+$ todo -g list
+List steps of 1 project
+
+[project A]: 3
+- task 1
+- task 2
+- task 3
+Error: wrong project path or configuration for `project B`, path: Some("non-existent")
+```

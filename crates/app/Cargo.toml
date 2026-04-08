@@ -1,6 +1,6 @@
 [package]
 name = "todo-app"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -9,6 +9,7 @@ config = { workspace = true }
 config-load = { workspace = true }
 home = { workspace = true }
 indexmap = { workspace = true }
+itertools = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_regex = { workspace = true }

@@ -19,6 +19,7 @@ fs-err = "3.3"
 function_name = "0.3"
 home = "0.5"
 indexmap = { version = "2.9", features = ["serde"] }
+itertools = "0.14"
 md-cli-test = "0.1"
 once_cell = "1.21"
 pulldown-cmark = "0.13"

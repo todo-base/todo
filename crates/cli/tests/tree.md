@@ -291,3 +291,26 @@ project B
   - task B-2
   - task B-1
 ```
+
+## Tree with missing project path
+
+```sh
+$ echo r#"
+[project."project A"]
+path = "project A"
+
+[project."project B"]
+path = "non-existent"
+"# > "todo.toml"
+```
+
+```sh
+$ todo -g tree
+Tree of 1 project
+
+[project A]: 3
+  - task 1
+  - task 2
+  - task 3
+Error: wrong project path or configuration for `project B`, path: Some("non-existent")
+```

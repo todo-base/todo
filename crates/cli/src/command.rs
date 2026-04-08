@@ -1,13 +1,13 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use todo_app::config::Config;
 use todo_app::project::{self, FsProjectMetadata, ProjectData};
 use todo_app::target::Location;
 use todo_app::{issue, locate_project_config, open_tracker};
 
-use crate::display::DisplayList;
+use crate::display::{DisplayList, out_errors};
 use crate::opts::{Order, ProjectLocation};
 use crate::outln;
 
@@ -99,8 +99,9 @@ pub fn list(root: Option<String>, project_location: ProjectLocation, config: &Co
     let mut location = project_location.into_location();
     let search_roots = local_search_roots(root.as_deref(), Some(&mut location), config)?;
 
-    let tracker = open_tracker(location, search_roots, config)?;
+    let (tracker, errors) = open_tracker(location, search_roots, config)?;
     tracker.display_projects_list(&config.display.project);
+    out_errors(errors.into_values());
 
     Ok(())
 }
@@ -109,8 +110,9 @@ pub fn tree(root: Option<String>, project_location: ProjectLocation, config: &Co
     let location = project_location.into_location();
     let search_roots = local_search_roots::<String>(root.as_deref(), None, config)?;
 
-    let tracker = open_tracker(location, search_roots, config)?;
+    let (tracker, errors) = open_tracker(location, search_roots, config)?;
     tracker.display_projects_tree(&config.display.project);
+    out_errors(errors.into_values());
 
     Ok(())
 }

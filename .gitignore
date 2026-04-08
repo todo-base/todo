@@ -1,6 +1,7 @@
 **/target/
 
 TODO.*
+ISSUES/
 Project.toml
 todo.toml
 notes.md
