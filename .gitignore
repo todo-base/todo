@@ -6,6 +6,7 @@ todo.toml
 notes.md
 tmp/
 
+.claude
 .idea
 *.iml
 **/.vscode

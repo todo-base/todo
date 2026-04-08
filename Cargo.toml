@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "app",
-    "cli",
-    "lib",
-    "tracker-fs",
-    "tests",
+    "crates/*",
 ]
 
 [profile.release]
@@ -34,7 +30,7 @@ thiserror = "2.0"
 toml = { version = "1.1", features = ["preserve_order"] }
 walkdir = "2.5"
 
-tests = { path = "tests" }
-todo-app = { path = "app" }
-todo-lib = { path = "lib" }
-todo-tracker-fs = { path = "tracker-fs" }
+tests = { path = "crates/tests" }
+todo-app = { path = "crates/app" }
+todo-lib = { path = "crates/lib" }
+todo-tracker-fs = { path = "crates/tracker-fs" }
