@@ -4,6 +4,7 @@ TODO.*
 Project.toml
 todo.toml
 notes.md
+tmp/
 
 .idea
 *.iml
