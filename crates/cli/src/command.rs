@@ -101,7 +101,7 @@ pub fn list(root: Option<String>, project_location: ProjectLocation, config: &Co
 
     let (tracker, errors) = open_tracker(location, search_roots, config)?;
     tracker.display_projects_list(&config.display.project);
-    out_errors(errors.into_values());
+    out_errors(errors.into_values(), true);
 
     Ok(())
 }
@@ -112,7 +112,7 @@ pub fn tree(root: Option<String>, project_location: ProjectLocation, config: &Co
 
     let (tracker, errors) = open_tracker(location, search_roots, config)?;
     tracker.display_projects_tree(&config.display.project);
-    out_errors(errors.into_values());
+    out_errors(errors.into_values(), true);
 
     Ok(())
 }

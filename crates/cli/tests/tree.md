@@ -312,5 +312,6 @@ Tree of 1 project
   - task 1
   - task 2
   - task 3
+
 Error: wrong project path or configuration for `project B`, path: Some("non-existent")
 ```

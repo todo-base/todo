@@ -21,7 +21,12 @@ macro_rules! outln {
     }};
 }
 
-pub fn out_errors(errors: impl IntoIterator<Item = impl Display>) {
+pub fn out_errors(errors: impl IntoIterator<Item = impl Display>, first_new_line: bool) {
+    let mut errors = errors.into_iter().peekable();
+    if first_new_line && errors.peek().is_some() {
+        outln!();
+    }
+
     for err in errors {
         outln!("Error: {err}");
     }
