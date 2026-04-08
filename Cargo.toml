@@ -13,9 +13,28 @@ lto = true
 
 [workspace.dependencies]
 anyhow = "1.0"
+assert_cmd = "2.2"
+clap = { version = "4.6", features = ["derive"] }
+config = { version = "0.15", features = ["preserve_order"] }
+config-load = "0.1"
 either = "1.15"
+env_logger = "0.11"
+fs-err = "3.3"
+function_name = "0.3"
+home = "0.5"
 indexmap = { version = "2.9", features = ["serde"] }
-regex = "1.11"
+md-cli-test = "0.1"
+once_cell = "1.21"
+pulldown-cmark = "0.13"
+regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
+serde_regex = "1.1"
 temp_testdir = "0.2"
 thiserror = "2.0"
+toml = { version = "1.1", features = ["preserve_order"] }
+walkdir = "2.5"
+
+tests = { path = "tests" }
+todo-app = { path = "app" }
+todo-lib = { path = "lib" }
+todo-tracker-fs = { path = "tracker-fs" }

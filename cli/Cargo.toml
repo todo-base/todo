@@ -9,16 +9,16 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { version = "4.5", features = ["derive"] }
+clap = { workspace = true }
 either = { workspace = true }
 indexmap = { workspace = true }
-todo-app = { path = "../app" }
-todo-lib = { path = "../lib" }
-todo-tracker-fs = { path = "../tracker-fs" }
+todo-app = { workspace = true }
+todo-lib = { workspace = true }
+todo-tracker-fs = { workspace = true }
 
 [dev-dependencies]
-md-cli-test = "0.1"
-assert_cmd = "2.0"
-pulldown-cmark = "0.13"
+assert_cmd = { workspace = true }
+md-cli-test = { workspace = true }
+pulldown-cmark = { workspace = true }
 regex = { workspace = true }
 temp_testdir = { workspace = true }

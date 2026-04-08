@@ -5,15 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
-config-load = "0.1"
-config = { version = "0.15", features = [
-    "preserve_order",
-] }
-home = "0.5"
+config = { workspace = true }
+config-load = { workspace = true }
+home = { workspace = true }
 indexmap = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
-serde_regex = "1.1"
+serde_regex = { workspace = true }
 thiserror = { workspace = true }
-todo-lib = { path = "../lib" }
-todo-tracker-fs = { path = "../tracker-fs" }
+todo-lib = { workspace = true }
+todo-tracker-fs = { workspace = true }

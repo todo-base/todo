@@ -5,18 +5,18 @@ edition = "2024"
 
 [dependencies]
 either = { workspace = true }
-fs-err = "3.1"
+fs-err = { workspace = true }
 indexmap = { workspace = true }
-once_cell = "1.21"
+once_cell = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
-todo-lib = { path = "../lib" }
-toml = { version = "0.8", features = ["preserve_order"] }
-walkdir = "2.5"
+todo-lib = { workspace = true }
+toml = { workspace = true }
+walkdir = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-function_name = "0.3"
+function_name = { workspace = true }
 temp_testdir = { workspace = true }
-tests = { path = "../tests" }
+tests = { workspace = true }
