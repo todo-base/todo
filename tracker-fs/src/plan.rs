@@ -68,10 +68,10 @@ where
                     };
 
                     if !in_block {
-                        if let Some(start) = line.get(..line.len().min(MD_BLOCK_START.len() + 1)) {
-                            if start.trim().to_lowercase() == MD_BLOCK_START {
-                                in_block = true;
-                            }
+                        if let Some(start) = line.get(..line.len().min(MD_BLOCK_START.len() + 1))
+                            && start.trim().to_lowercase() == MD_BLOCK_START
+                        {
+                            in_block = true;
                         }
                         false
                     } else {

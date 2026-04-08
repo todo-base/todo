@@ -100,14 +100,12 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
                 .project_plan(project.id())
                 .map(|plan| {
                     plan.steps().iter().fold(0_usize, |count, step| {
-                        if !config.show_substeps {
-                            if let Step::Issue(id) = step {
-                                if let Some(issue) = plan.get_issue(id) {
-                                    if issue.parent_id.is_some() {
-                                        return count;
-                                    }
-                                }
-                            }
+                        if !config.show_substeps
+                            && let Step::Issue(id) = step
+                            && let Some(issue) = plan.get_issue(id)
+                            && issue.parent_id.is_some()
+                        {
+                            return count;
                         }
                         count + 1
                     })
@@ -251,13 +249,12 @@ fn format_project_title_key_inner<ID>(
 ) where
     ID: HashedId + Clone + Display,
 {
-    if with_parents {
-        if let Some(parent_id) = project.parent_id() {
-            if let Some(parent) = tracker.projects().get(parent_id) {
-                format_project_title_key_inner(tracker, parent, consist, true, output);
-                write!(output, "/").expect("Failed to write to string");
-            }
-        }
+    if with_parents
+        && let Some(parent_id) = project.parent_id()
+        && let Some(parent) = tracker.projects().get(parent_id)
+    {
+        format_project_title_key_inner(tracker, parent, consist, true, output);
+        write!(output, "/").expect("Failed to write to string");
     }
 
     match consist {

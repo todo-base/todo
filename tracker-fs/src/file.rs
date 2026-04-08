@@ -23,10 +23,10 @@ pub fn find_by_name_part(dir: impl AsRef<Path>, file_name_part: impl AsRef<str>)
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if let Some(file_name) = path.file_name() {
-            if file_name.to_string_lossy().contains(file_name_part.as_ref()) {
-                return Some(path.to_path_buf());
-            }
+        if let Some(file_name) = path.file_name()
+            && file_name.to_string_lossy().contains(file_name_part.as_ref())
+        {
+            return Some(path.to_path_buf());
         }
     }
     None

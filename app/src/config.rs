@@ -116,10 +116,10 @@ impl ProjectConfig {
             return Ok(None);
         };
 
-        if let Some(projects_root_dir) = &config.projects_root_dir {
-            if project_path.is_relative() {
-                project_path = projects_root_dir.join(project_path)
-            }
+        if let Some(projects_root_dir) = &config.projects_root_dir
+            && project_path.is_relative()
+        {
+            project_path = projects_root_dir.join(project_path)
         }
 
         let Some(config_placement) = config.find_project_config_placement(&project_path, None) else {
