@@ -13,6 +13,11 @@ itertools = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_regex = { workspace = true }
+serde_with = { workspace = true }
+strum = { workspace = true }
 thiserror = { workspace = true }
 todo-lib = { workspace = true }
 todo-tracker-fs = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }

@@ -8,6 +8,8 @@ use config_load::{ConfigLoader, FileLocation, Load};
 use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_with::DeserializeFromStr;
+use strum::EnumString;
 use todo_tracker_fs::Placement;
 use todo_tracker_fs::config::{DeserializedId, FsProjectConfig};
 use todo_tracker_fs::file::find_by_name_part;
@@ -381,7 +383,9 @@ impl SourceConfig {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, EnumString, DeserializeFromStr)]
+#[strum(ascii_case_insensitive)]
+#[serde(rename_all = "lowercase")]
 pub enum WorkingMode {
     #[default]
     Local,
@@ -465,5 +469,54 @@ impl Load for Config {
             .add_source(Environment::with_prefix("TODO_CONFIG").separator("_"))
             .build()?;
         config.try_deserialize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Wrap {
+        working_mode: WorkingMode,
+    }
+
+    #[test]
+    fn working_mode_deserialize() {
+        for raw in ["local", "Local", "LOCAL", "LoCaL"] {
+            let toml_src = format!("working_mode = \"{raw}\"");
+            let config: Wrap = toml::from_str(&toml_src).unwrap();
+            assert_eq!(config.working_mode, WorkingMode::Local, "input: {raw:?}");
+        }
+
+        for raw in ["global", "Global", "GLOBAL", "GloBal"] {
+            let toml_src = format!("working_mode = \"{raw}\"");
+            let config: Wrap = toml::from_str(&toml_src).unwrap();
+            assert_eq!(config.working_mode, WorkingMode::Global, "input: {raw:?}");
+        }
+    }
+
+    #[test]
+    fn working_mode_deserialize_unknown_variant() {
+        let err = toml::from_str::<Wrap>("working_mode = \"remote\"").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("remote") || err.to_string().contains("working_mode"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn working_mode_serialize() {
+        let local = toml::to_string(&Wrap {
+            working_mode: WorkingMode::Local,
+        })
+        .unwrap();
+        assert_eq!(local.trim(), "working_mode = \"local\"");
+
+        let global = toml::to_string(&Wrap {
+            working_mode: WorkingMode::Global,
+        })
+        .unwrap();
+        assert_eq!(global.trim(), "working_mode = \"global\"");
     }
 }

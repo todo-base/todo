@@ -188,7 +188,7 @@ mod tests {
                 (Item::Text(text), Item::Text(parsed_text)) => {
                     assert_eq!(text, parsed_text);
                 },
-                _ => assert!(false),
+                _ => panic!(),
             }
         }
     }

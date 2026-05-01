@@ -9,11 +9,11 @@ use tests::init_logger;
 use todo_lib::issue::{Issue, Milestone};
 use todo_lib::plan::Plan;
 use todo_lib::plan::Step::*;
+use todo_tracker_fs::Placement;
 use todo_tracker_fs::generator::IntIdGenerator;
 use todo_tracker_fs::plan::LoadProjectPlan;
-use todo_tracker_fs::Placement;
 
-static TASK_LIST_TEXT: &'static str = r"
+static TASK_LIST_TEXT: &str = r"
 - task A
   - task AA
 
