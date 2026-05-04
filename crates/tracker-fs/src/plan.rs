@@ -10,9 +10,9 @@ use todo_lib::issue::Issue;
 use todo_lib::plan::Plan;
 
 use self::parse::Item;
+use crate::Placement;
 use crate::generator::IdGenerator;
 use crate::issue::{MD_BLOCK_END, MD_BLOCK_START};
-use crate::Placement;
 
 pub mod parse;
 

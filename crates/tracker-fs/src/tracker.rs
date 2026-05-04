@@ -8,12 +8,12 @@ use todo_lib::id::HashedId;
 use todo_lib::plan::Plan;
 use todo_lib::project::Project;
 
+use crate::Placement;
 use crate::config::FsProjectConfig;
 use crate::file::find_by_regex;
 use crate::generator::IntIdGenerator;
 use crate::plan::LoadProjectPlan;
 use crate::project::LoadProject;
-use crate::Placement;
 
 pub struct FsTracker<PID = String, ID = u64> {
     projects: IndexMap<PID, Project<PID>>,
@@ -118,9 +118,5 @@ where
         plan_exists = true;
     }
 
-    if plan_exists {
-        Ok(Some(plan))
-    } else {
-        Ok(None)
-    }
+    if plan_exists { Ok(Some(plan)) } else { Ok(None) }
 }

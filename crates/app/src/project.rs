@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use todo_tracker_fs::config::{FsProjectConfig, SerializedId};
 use todo_tracker_fs::file::find_by_name_part;
 

@@ -3,7 +3,7 @@ use std::io;
 use todo_lib::id::HashedId;
 use todo_lib::issue::Issue;
 use todo_tracker_fs::issue::SaveIssue;
-use todo_tracker_fs::{tracker, Placement};
+use todo_tracker_fs::{Placement, tracker};
 
 use crate::config::SourceConfig;
 use crate::project::ProjectData;

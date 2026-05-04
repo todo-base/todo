@@ -3,8 +3,8 @@ use std::{env, io};
 
 use anyhow::anyhow;
 use todo_lib::id::HashedId;
-use todo_tracker_fs::config::{DeserializedId, FsProjectConfig};
 use todo_tracker_fs::Placement;
+use todo_tracker_fs::config::{DeserializedId, FsProjectConfig};
 
 use crate::config::SourceConfig;
 use crate::target::Location;
