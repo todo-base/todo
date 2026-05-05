@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::path::PathBuf;
 
 use indexmap::IndexSet;
 
@@ -37,12 +38,23 @@ pub struct IssueRelation<ID> {
     pub relation: Relation,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum IssueContent {
+    #[default]
+    Empty,
+    Inline(String),
+    Linked {
+        file: PathBuf,
+        note: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct Issue<ID> {
     pub id: ID,
     pub parent_id: Option<ID>,
     pub name: String,
-    pub content: String,
+    pub content: IssueContent,
     pub subissues: IndexSet<ID>,
     pub relations: Vec<IssueRelation<ID>>,
 }
@@ -87,7 +99,23 @@ impl<ID> Issue<ID> {
     }
 
     pub fn with_content(mut self, content: impl Into<String>) -> Self {
-        self.content = content.into();
+        self.content = IssueContent::Inline(content.into());
+        self
+    }
+
+    pub fn with_content_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.content = IssueContent::Linked {
+            file: path.into(),
+            note: None,
+        };
+        self
+    }
+
+    pub fn with_content_file_and_note(mut self, path: impl Into<PathBuf>, note: impl Into<String>) -> Self {
+        self.content = IssueContent::Linked {
+            file: path.into(),
+            note: Some(note.into()),
+        };
         self
     }
 }

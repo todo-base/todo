@@ -17,6 +17,7 @@ walkdir = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+const_format = { workspace = true }
 function_name = { workspace = true }
 temp_testdir = { workspace = true }
 tests = { workspace = true }

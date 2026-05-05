@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use todo_lib::issue::{Issue, Milestone};
+use todo_lib::issue::{Issue, IssueContent, Milestone};
 
 use crate::generator::IdGenerator;
 
@@ -43,6 +43,12 @@ pub trait ParseLine<GEN> {
     fn parse_line(line: &str, id_generator: GEN) -> Self;
 }
 
+fn issue_name_filelink_regex() -> &'static Regex {
+    static FILELINK_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^\s*\[(.*)\]\((.*)\)(.*)").expect("regex must be correct"));
+    &FILELINK_REGEX
+}
+
 impl<ID, GEN> ParseLine<GEN> for Issue<ID>
 where
     ID: FromStr,
@@ -69,11 +75,36 @@ where
             .map(|mat| mat.as_str().trim().to_string())
             .unwrap_or_default();
 
+        let name_captures = issue_name_filelink_regex().captures(&name);
+        let (name, content_file_path, trailing_note) = name_captures
+            .as_ref()
+            .map(|caps| {
+                let name = caps
+                    .get(1)
+                    .map(|value| value.as_str().trim())
+                    .unwrap_or(&name)
+                    .to_string();
+                let content_file = caps.get(2).map(|value| value.as_str().trim().to_string());
+                let trailing_note = caps.get(3).map(|value| value.as_str().trim().to_string());
+
+                (name, content_file, trailing_note)
+            })
+            .unwrap_or((name, None, None));
+
+        let content = if let Some(path) = content_file_path {
+            IssueContent::Linked {
+                file: path.into(),
+                note: trailing_note,
+            }
+        } else {
+            IssueContent::Empty
+        };
+
         Self {
             id,
             name,
             parent_id: None,
-            content: Default::default(),
+            content,
             subissues: Default::default(),
             relations: Default::default(),
         }
