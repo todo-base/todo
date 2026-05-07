@@ -35,6 +35,6 @@ jobs:
         run: |
           cargo +nightly fmt --check
           cargo clippy --all-targets -- -D warnings
-          
+
       - name: Run tests
-        run: cargo test --verbose
+        run: RUST_BACKTRACE=0 cargo test --verbose

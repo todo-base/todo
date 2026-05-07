@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use const_format::concatcp;
 use fs_err::File;
 use function_name::named;
 use temp_testdir::TempDir;
@@ -13,7 +14,8 @@ use todo_tracker_fs::Placement;
 use todo_tracker_fs::generator::IntIdGenerator;
 use todo_tracker_fs::plan::LoadProjectPlan;
 
-static TASK_LIST_TEXT: &str = r"
+#[rustfmt::skip]
+static TASK_LIST_TEXT: &str = concatcp!(r"
 - task A
   - task AA
 
@@ -52,6 +54,19 @@ static TASK_LIST_TEXT: &str = r"
 - task I
 
 # Mile 2
+
+- [task K](", BASIC_TASK_FILE_PATH, ") Trailing description first line.
+  Second line
+");
+
+const BASIC_TASK_FILE_PATH: &str = "task-basic.md";
+
+const BASIC_TASK_FILE_CONTENT: &str = r"
+Some content.
+
+## Some section
+
+Some section content.
 ";
 
 #[track_caller]
@@ -75,6 +90,7 @@ fn assert_task_list_plan(plan: &Plan<u64>) {
         Issue(16),
         Issue(17),
         Milestone(18),
+        Issue(19),
     ]);
 
     assert_eq!(*plan.get_issue(&1).unwrap(), Issue::new(1, "task A").with_subissue(2));
@@ -145,6 +161,11 @@ block
             .with_needed_issue(16)
             .with_needed_issue(17)
     );
+    assert_eq!(
+        *plan.get_issue(&19).unwrap(),
+        Issue::new(19, "task K")
+            .with_content_file_and_note(BASIC_TASK_FILE_PATH, "Trailing description first line.\nSecond line")
+    );
 }
 
 fn create_temp_project_root_dir(temp_dir: impl AsRef<Path>, project: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
@@ -153,6 +174,13 @@ fn create_temp_project_root_dir(temp_dir: impl AsRef<Path>, project: impl AsRef<
         fs::create_dir(&root_dir)?;
     }
     Ok(root_dir)
+}
+
+fn create_task_files(project_root: impl AsRef<Path>) -> anyhow::Result<()> {
+    let basic_task_content_file_path = project_root.as_ref().join(BASIC_TASK_FILE_PATH);
+    File::create(basic_task_content_file_path.clone())?.write_all(BASIC_TASK_FILE_CONTENT.as_bytes())?;
+
+    Ok(())
 }
 
 #[test]
@@ -165,6 +193,8 @@ fn tasks_from_todo_file() -> anyhow::Result<()> {
     let todo_file_path = project_root.join("TODO.md");
 
     File::create(todo_file_path.clone())?.write_all(TASK_LIST_TEXT.as_bytes())?;
+
+    create_task_files(&project_root)?;
 
     let id_generator = IntIdGenerator::new(1);
     let plan = Plan::load(&Placement::WholeFile(todo_file_path), &id_generator)?.unwrap();
@@ -197,7 +227,7 @@ List 1:
   - item 3
 
 ```md
-# Regular internal markdown 
+# Regular internal markdown
 
 List 2:
 
@@ -217,6 +247,8 @@ List 3:
         )
         .as_bytes(),
     )?;
+
+    create_task_files(&project_root)?;
 
     let id_generator = IntIdGenerator::new(1);
     let plan = Plan::load(&Placement::CodeBlockInFile(manifest_file_path), &id_generator)?.unwrap();

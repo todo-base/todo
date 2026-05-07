@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 
-use todo_lib::issue::Issue;
+use todo_lib::issue::{Issue, IssueContent};
 
 use crate::Placement;
 
@@ -21,11 +21,24 @@ impl<ID> SaveIssue for Issue<ID> {
     type Id = ID;
 
     fn to_text(&self) -> String {
-        let mut text = format!("- {}", self.name);
-        for line in self.content.lines() {
-            text.push_str("\n  ");
-            text.push_str(line);
+        let name = &self.name;
+        let title = match &self.content {
+            IssueContent::Empty | IssueContent::Inline(_) => name,
+            IssueContent::Linked { file: file_path, .. } => &format!("[{name}]({})", file_path.display()),
+        };
+        let mut text = format!("- {title}");
+
+        if let IssueContent::Inline(content)
+        | IssueContent::Linked {
+            note: Some(content), ..
+        } = &self.content
+        {
+            for line in content.lines() {
+                text.push_str("\n  ");
+                text.push_str(line);
+            }
         }
+
         text
     }
 
@@ -153,4 +166,20 @@ fn get_newline_mark_range(haystack: impl AsRef<str>, mark: impl AsRef<str>, from
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linked_content_with_note_to_text() {
+        let issue =
+            Issue::new(1, "Task").with_content_file_and_note("rel/path/task.md", "User inline description.\nNext line");
+        let text = issue.to_text();
+        assert_eq!(
+            &text,
+            "- [Task](rel/path/task.md)\n  User inline description.\n  Next line"
+        );
+    }
 }

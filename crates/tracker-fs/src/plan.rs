@@ -7,7 +7,7 @@ use either::Either;
 use fs_err as fs;
 use indexmap::IndexMap;
 use todo_lib::id::HashedId;
-use todo_lib::issue::Issue;
+use todo_lib::issue::{Issue, IssueContent};
 use todo_lib::plan::Plan;
 
 use self::parse::Item;
@@ -187,16 +187,28 @@ where
                             .expect("issue for description must exist")
                             .1;
 
-                        if !target_issue.content.is_empty() {
-                            target_issue.content.push('\n');
-                        }
+                        match &mut target_issue.content {
+                            val @ IssueContent::Empty => {
+                                *val = IssueContent::Inline(description_line.into());
+                            },
+                            IssueContent::Linked { note: val @ None, .. } => {
+                                *val = Some(description_line.into());
+                            },
+                            IssueContent::Inline(content)
+                            | IssueContent::Linked {
+                                note: Some(content), ..
+                            } => {
+                                if !content.is_empty() {
+                                    content.push('\n');
+                                }
+                                if !last.intermediate_blank.is_empty() {
+                                    let blank = mem::take(&mut last.intermediate_blank);
+                                    content.push_str(&blank);
+                                }
 
-                        if !last.intermediate_blank.is_empty() {
-                            let blank = mem::take(&mut last.intermediate_blank);
-                            target_issue.content.push_str(&blank);
+                                content.push_str(description_line);
+                            },
                         }
-
-                        target_issue.content.push_str(description_line);
 
                         last.line = Line::Description;
                     } else if text.trim().is_empty() {
