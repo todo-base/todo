@@ -1,4 +1,5 @@
 use std::io::{self, BufRead};
+use std::mem;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -107,6 +108,8 @@ where
                 (Item::Empty, _) => {
                     if let Line::Separator = last.line {
                         planned.add_issues(last.extract_issues());
+                    } else {
+                        last.intermediate_blank.push('\n');
                     }
                     last.line = Line::Empty;
                 },
@@ -164,8 +167,10 @@ where
                     planned.add_milestone(milestone);
                     last.line = Line::Milestone;
                 },
-                (Item::Text(text), text_level) => match last.line {
-                    Line::Issue | Line::Description | Line::Empty if text_level > last.issue_level => {
+                (Item::Text(text), text_level) => {
+                    if matches!(last.line, Line::Issue | Line::Description | Line::Empty)
+                        && text_level > last.issue_level
+                    {
                         let mut padding = (last.issue_level + 1) * 2;
                         let description_line = text.trim_start_matches(|ch| {
                             if padding > 0 && ch == ' ' {
@@ -181,15 +186,31 @@ where
                             .last_mut()
                             .expect("issue for description must exist")
                             .1;
+
                         if !target_issue.content.is_empty() {
                             target_issue.content.push('\n');
                         }
+
+                        if !last.intermediate_blank.is_empty() {
+                            let blank = mem::take(&mut last.intermediate_blank);
+                            target_issue.content.push_str(&blank);
+                        }
+
                         target_issue.content.push_str(description_line);
 
                         last.line = Line::Description;
-                    },
-                    _ => last.line = Line::Other,
+                    } else if text.trim().is_empty() {
+                        last.intermediate_blank.push_str(&text);
+                        last.intermediate_blank.push('\n');
+                        last.line = Line::Empty;
+                    } else {
+                        last.line = Line::Other;
+                    }
                 },
+            }
+
+            if last.line != Line::Empty {
+                last.intermediate_blank.clear();
             }
         }
         planned.add_issues(last.extract_issues());
@@ -214,6 +235,7 @@ enum Line {
 struct Last<ID> {
     issue_level: usize,
     issue_parent_id: Option<ID>,
+    intermediate_blank: String,
     line: Line,
     parsed_issues: IndexMap<ID, Issue<ID>>,
 }
@@ -223,6 +245,7 @@ impl<ID: HashedId + PartialEq + Clone> Last<ID> {
         Self {
             issue_level: 0,
             issue_parent_id: None,
+            intermediate_blank: String::new(),
             line: Line::None,
             parsed_issues: IndexMap::new(),
         }
