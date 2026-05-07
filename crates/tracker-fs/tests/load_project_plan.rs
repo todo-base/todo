@@ -37,7 +37,7 @@ static TASK_LIST_TEXT: &str = r"
 - task G
   Multi line
   description
-  
+
   ```code
   block
   ```
