@@ -424,16 +424,6 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn update_working_mode(&mut self, force_local: bool, force_global: bool) {
-        if force_local != force_global {
-            self.working_mode = if force_local {
-                WorkingMode::Local
-            } else {
-                WorkingMode::Global
-            };
-        }
-    }
-
     pub fn update_display_project(&mut self, force_compact: bool, force_pretty: bool, force_max_steps: Option<usize>) {
         if let Some(max_steps) = force_max_steps {
             self.display.project.max_steps = Some(max_steps);

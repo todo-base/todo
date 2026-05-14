@@ -10,12 +10,11 @@ mod opts;
 fn main() -> anyhow::Result<()> {
     let CliOpts {
         config_file,
-        working_mode,
+        config_override,
         command,
     } = CliOpts::parse();
 
-    let mut config = Config::load(config_file)?;
-    config.update_working_mode(working_mode.local, working_mode.global);
+    let mut config = config_override.override_config(Config::load(config_file)?)?;
 
     match command {
         Command::New(NewProject {

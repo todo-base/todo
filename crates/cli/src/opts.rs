@@ -4,28 +4,20 @@ use clap::{Parser, Subcommand};
 use todo_app::issue;
 use todo_app::target::Location;
 
+pub use self::config_override::ConfigOpts;
+
+pub mod config_override;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct CliOpts {
     #[arg(short, long)]
     pub config_file: Option<PathBuf>,
-
     #[command(flatten)]
-    pub working_mode: WorkingMode,
+    pub config_override: ConfigOpts,
 
     #[command(subcommand)]
     pub command: Command,
-}
-
-#[derive(Parser, Clone, Copy, Debug)]
-pub struct WorkingMode {
-    /// Work in local mode
-    #[arg(short, long, conflicts_with = "global")]
-    pub local: bool,
-
-    /// Work in global mode
-    #[arg(short, long, conflicts_with = "local")]
-    pub global: bool,
 }
 
 #[derive(Subcommand)]
