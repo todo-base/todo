@@ -109,12 +109,10 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
             let items_count = self
                 .project_plan(project.id())
                 .map(|plan| {
-                    let issues_count = plan
-                        .issues()
+                    plan.issues()
                         .values()
                         .filter(|issue| config.show_subitems || issue.parent_id.is_none())
-                        .count();
-                    issues_count
+                        .count()
                 })
                 .unwrap_or(0);
             out!(": {items_count}")
@@ -174,7 +172,7 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
                         }
 
                         is_next_displayed = display_item_line(parent_ids.len() + 1, &format!("- {}", issue.name));
-                        parent_ids.push(issue.id.clone());
+                        parent_ids.push(issue.id);
                     }
                 } else {
                     is_next_displayed = display_item_line(0, &format!("- {}", issue.name));
