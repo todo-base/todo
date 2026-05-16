@@ -140,9 +140,9 @@ pub struct DisplayProjectOpts {
     #[clap(flatten)]
     pub project_title: DisplayProjectTitleOpts,
     #[arg(long)]
-    pub project_max_steps: Option<usize>,
+    pub project_max_items: Option<usize>,
     #[arg(long)]
-    pub project_show_substeps: Option<bool>,
+    pub project_show_subitems: Option<bool>,
     #[arg(long)]
     pub project_compact: Option<bool>,
     #[arg(long)]
@@ -153,16 +153,16 @@ impl DisplayProjectOpts {
     pub fn override_config(self, config: config::DisplayProjectConfig) -> anyhow::Result<config::DisplayProjectConfig> {
         let Self {
             project_title,
-            project_max_steps,
-            project_show_substeps,
+            project_max_items,
+            project_show_subitems,
             project_compact,
             separate_projects,
         } = self;
 
         Ok(config::DisplayProjectConfig {
             title: project_title.override_config(config.title)?,
-            max_steps: project_max_steps.or(config.max_steps),
-            show_substeps: project_show_substeps.unwrap_or(config.show_substeps),
+            max_items: project_max_items.or(config.max_items),
+            show_subitems: project_show_subitems.unwrap_or(config.show_subitems),
             compact: project_compact.unwrap_or(config.compact),
             separate_projects: separate_projects.unwrap_or(config.separate_projects),
         })
@@ -188,7 +188,7 @@ pub struct DisplayProjectTitleOpts {
     #[arg(long)]
     pub project_title_id_and_name_after: Option<String>,
     #[arg(long)]
-    pub project_title_show_steps_count: Option<bool>,
+    pub project_title_show_items_count: Option<bool>,
 }
 
 impl DisplayProjectTitleOpts {
@@ -205,7 +205,7 @@ impl DisplayProjectTitleOpts {
             project_title_id_and_name_before,
             project_title_id_and_name_separator,
             project_title_id_and_name_after,
-            project_title_show_steps_count,
+            project_title_show_items_count,
         } = self;
 
         Ok(config::DisplayProjectTitleConfig {
@@ -223,7 +223,7 @@ impl DisplayProjectTitleOpts {
             id_and_name_after: project_title_id_and_name_after
                 .map(Into::into)
                 .or(config.id_and_name_after),
-            show_steps_count: project_title_show_steps_count.unwrap_or(config.show_steps_count),
+            show_items_count: project_title_show_items_count.unwrap_or(config.show_items_count),
         })
     }
 }

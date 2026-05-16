@@ -7,13 +7,14 @@ use either::Either;
 use fs_err as fs;
 use indexmap::IndexMap;
 use todo_lib::id::HashedId;
-use todo_lib::issue::{Issue, IssueContent};
+use todo_lib::issue::{Issue, IssueContent, IssueSet};
 use todo_lib::plan::Plan;
 
 use self::parse::Item;
 use crate::Placement;
 use crate::generator::IdGenerator;
 use crate::issue::{MD_BLOCK_END, MD_BLOCK_START};
+use crate::plan::parse::Header;
 
 pub mod parse;
 
@@ -107,7 +108,7 @@ where
             match Item::parse(line, id_generator) {
                 (Item::Empty, _) => {
                     if let Line::Separator = last.line {
-                        planned.add_issues(last.extract_issues());
+                        last.flush_issues(&mut planned);
                     } else {
                         last.intermediate_blank.push('\n');
                     }
@@ -161,11 +162,17 @@ where
                     last.insert_issue(issue, issue_level);
                     last.line = Line::Issue;
                 },
-                (Item::Milestone(mut milestone), _milestone_level) => {
-                    milestone.needed_issues.extend(last.parsed_issues.keys().cloned());
-                    planned.add_issues(last.extract_issues());
-                    planned.add_milestone(milestone);
-                    last.line = Line::Milestone;
+                (Item::Header(header), _) => {
+                    last.flush_issues(&mut planned);
+                    last.update_header(header);
+
+                    let set_name = last.actual_set_name();
+
+                    if planned.get_set(&set_name).is_none() {
+                        planned.add_set(IssueSet::new(set_name.clone()));
+                    }
+                    last.current_set_name = Some(set_name);
+                    last.line = Line::Header;
                 },
                 (Item::Text(text), text_level) => {
                     if matches!(last.line, Line::Issue | Line::Description | Line::Empty)
@@ -225,7 +232,7 @@ where
                 last.intermediate_blank.clear();
             }
         }
-        planned.add_issues(last.extract_issues());
+        last.flush_issues(&mut planned);
 
         Ok(planned)
     }
@@ -239,7 +246,7 @@ enum Line {
     Separator,
     Issue,
     Description,
-    Milestone,
+    Header,
     Other,
 }
 
@@ -250,6 +257,8 @@ struct Last<ID> {
     intermediate_blank: String,
     line: Line,
     parsed_issues: IndexMap<ID, Issue<ID>>,
+    header_stack: Vec<Header>,
+    current_set_name: Option<String>,
 }
 
 impl<ID: HashedId + PartialEq + Clone> Last<ID> {
@@ -260,6 +269,8 @@ impl<ID: HashedId + PartialEq + Clone> Last<ID> {
             intermediate_blank: String::new(),
             line: Line::None,
             parsed_issues: IndexMap::new(),
+            header_stack: Vec::new(),
+            current_set_name: None,
         }
     }
 
@@ -274,13 +285,43 @@ impl<ID: HashedId + PartialEq + Clone> Last<ID> {
         Some(self.parsed_issues.get_index_mut(parent_issue_idx)?.1)
     }
 
-    fn extract_issues(&mut self) -> impl IntoIterator<Item = Issue<ID>> + '_ {
-        self.parsed_issues.drain(..).map(|(_, issue)| issue)
-    }
-
     fn insert_issue(&mut self, issue: Issue<ID>, issue_level: usize) {
         self.issue_parent_id.clone_from(&issue.parent_id);
         self.issue_level = issue_level;
         self.parsed_issues.insert(issue.id.clone(), issue);
+    }
+
+    fn extract_issues(&mut self) -> impl IntoIterator<Item = Issue<ID>> + '_ {
+        self.parsed_issues.drain(..).map(|(_, issue)| issue)
+    }
+
+    fn flush_issues(&mut self, planned: &mut Plan<ID>) {
+        let set_name = self.current_set_name.clone();
+        for issue in self.extract_issues() {
+            let id = issue.id.clone();
+            planned.add_issue(issue);
+            if let Some(name) = &set_name {
+                planned.add_issue_to_set(name, id);
+            }
+        }
+    }
+
+    fn update_header(&mut self, header: Header) {
+        while let Some(last_header) = self.header_stack.last() {
+            if last_header.level >= header.level {
+                self.header_stack.pop();
+            } else {
+                break;
+            }
+        }
+        self.header_stack.push(header);
+    }
+
+    fn actual_set_name(&self) -> String {
+        self.header_stack
+            .iter()
+            .map(|header| header.name.as_str())
+            .collect::<Vec<_>>()
+            .join("/")
     }
 }

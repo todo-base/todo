@@ -38,9 +38,9 @@ $ todo add "task B-1" --project "project B"
 
 ```sh
 $ todo list --pretty .
-List steps of 2 projects
+List items of 2 projects
 
-[project A]: 6
+[project A]: 5
 - To complete task 1
 - Some other task 2
 
@@ -58,7 +58,7 @@ List steps of 2 projects
 
 ```sh
 $ todo list --compact .
-[project A]: 6
+[project A]: 5
 - To complete task 1
 - Some other task 2
 # Milestone A
@@ -78,7 +78,7 @@ id_before = ""
 id_after = ""
 
 [display.project]
-max_steps = 4
+max_items = 3
 compact = true
 "# > "todo.toml"
 ```
@@ -87,7 +87,7 @@ compact = true
 
 ```sh
 $ todo list .
-project A: 6
+project A: 5
 - To complete task 1
 - Some other task 2
 # Milestone A
@@ -99,9 +99,9 @@ project B: 1
 
 ```sh
 $ todo list . --pretty
-List steps of 2 projects
+List items of 2 projects
 
-project A: 6
+project A: 5
 - To complete task 1
 - Some other task 2
 
@@ -115,10 +115,10 @@ project B: 1
 ```
 
 ```sh
-$ todo list . --pretty --max-steps 5
-List steps of 2 projects
+$ todo list . --pretty --max-items 4
+List items of 2 projects
 
-project A: 6
+project A: 5
 - To complete task 1
 - Some other task 2
 
@@ -141,7 +141,7 @@ id_before = "["
 id_after = "]"
 
 [display.project]
-max_steps = 2
+max_items = 2
 compact = true
 separate_projects = true
 "# > "todo.toml"
@@ -161,8 +161,8 @@ $ todo list .
 [project B]: 1
 - task B-1
 
-[project-a] A: 6
+[project-a] A: 5
 - To complete task 1
 - Some other task 2
-..4
+..3
 ```
