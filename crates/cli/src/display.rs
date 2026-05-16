@@ -3,7 +3,6 @@ use std::fmt::{Display, Write};
 use indexmap::{IndexMap, IndexSet};
 use todo_app::config::{DisplayProjectConfig, TitleConsist};
 use todo_lib::id::HashedId;
-use todo_lib::plan::Step;
 use todo_lib::project::Project;
 use todo_tracker_fs::FsTracker;
 
@@ -41,7 +40,7 @@ pub trait DisplayList<ID> {
         title_key: Option<impl AsRef<str>>,
         config: &DisplayProjectConfig,
     );
-    fn display_steps_list(
+    fn display_items_list(
         &self,
         prefix: impl AsRef<str>,
         indent: impl AsRef<str>,
@@ -106,27 +105,23 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
             out!("{after}");
         }
 
-        if config.title.show_steps_count {
-            let steps_count = self
+        if config.title.show_items_count {
+            let items_count = self
                 .project_plan(project.id())
                 .map(|plan| {
-                    plan.steps().iter().fold(0_usize, |count, step| {
-                        if !config.show_substeps
-                            && let Step::Issue(id) = step
-                            && let Some(issue) = plan.get_issue(id)
-                            && issue.parent_id.is_some()
-                        {
-                            return count;
-                        }
-                        count + 1
-                    })
+                    let issues_count = plan
+                        .issues()
+                        .values()
+                        .filter(|issue| config.show_subitems || issue.parent_id.is_none())
+                        .count();
+                    issues_count
                 })
                 .unwrap_or(0);
-            out!(": {steps_count}")
+            out!(": {items_count}")
         }
     }
 
-    fn display_steps_list(
+    fn display_items_list(
         &self,
         prefix: impl AsRef<str>,
         indent: impl AsRef<str>,
@@ -135,58 +130,60 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
     ) {
         let prefix = prefix.as_ref();
         let indent = indent.as_ref();
-        let max_count = config.max_steps.unwrap_or(usize::MAX);
+        let max_count = config.max_items.unwrap_or(usize::MAX);
 
         if let Some(plan) = self.project_plan(project.id()) {
             let mut parent_ids = Vec::new();
+            let mut items_count = 0;
 
-            let mut step_count = 0;
-            let mut display_line = |level, text: &str| {
-                if step_count < max_count {
-                    outln!("{prefix}{indent}{:1$}{text}", "", level * 2);
+            let display_line = |level, text: &str| {
+                outln!("{prefix}{indent}{:1$}{text}", "", level * 2);
+            };
+            let mut display_item_line = |level, text: &str| {
+                if items_count < max_count {
+                    display_line(level, text);
                 }
-                step_count += 1;
-                step_count < max_count
+                items_count += 1;
+                items_count < max_count
             };
 
             let mut is_next_displayed = max_count > 0;
-            for step in plan.steps() {
-                match step {
-                    Step::Issue(id) => {
-                        if let Some(issue) = plan.get_issue(id) {
-                            if let Some(parent_id) = issue.parent_id {
-                                if config.show_substeps {
-                                    loop {
-                                        if Some(parent_id) == parent_ids.last().copied() || parent_ids.pop().is_none() {
-                                            break;
-                                        }
-                                    }
+            let mut current_set_name: Option<&str> = None;
+            for (id, issue) in plan.issues() {
+                let new_set_name = plan.find_sets(id).next().map(|set| set.name.as_str());
 
-                                    is_next_displayed =
-                                        display_line(parent_ids.len() + 1, &format!("- {}", issue.name));
-                                    parent_ids.push(issue.id);
-                                }
-                            } else {
-                                is_next_displayed = display_line(0, &format!("- {}", issue.name));
-                                parent_ids.clear();
+                if is_next_displayed && new_set_name != current_set_name {
+                    if let Some(set_name) = &new_set_name {
+                        if !config.compact {
+                            outln!("{}", prefix.trim_end());
+                        }
+                        display_line(0, &format!("# {set_name}"));
+                        if !config.compact {
+                            outln!("{}", prefix.trim_end());
+                        }
+                    }
+                    current_set_name = new_set_name;
+                }
+
+                if let Some(parent_id) = &issue.parent_id {
+                    if config.show_subitems {
+                        loop {
+                            if Some(parent_id) == parent_ids.last() || parent_ids.pop().is_none() {
+                                break;
                             }
                         }
-                    },
-                    Step::Milestone(id) => {
-                        if let Some(milestone) = plan.get_milestone(id) {
-                            if !config.compact && is_next_displayed {
-                                outln!("{prefix}");
-                            }
-                            is_next_displayed = display_line(0, &format!("# {}", milestone.name));
-                            if !config.compact && is_next_displayed {
-                                outln!("{prefix}");
-                            }
-                        }
-                    },
+
+                        is_next_displayed = display_item_line(parent_ids.len() + 1, &format!("- {}", issue.name));
+                        parent_ids.push(issue.id.clone());
+                    }
+                } else {
+                    is_next_displayed = display_item_line(0, &format!("- {}", issue.name));
+                    parent_ids.clear();
                 }
             }
-            if step_count > max_count {
-                outln!("{prefix}{indent}..{}", step_count - max_count);
+
+            if items_count > max_count {
+                outln!("{prefix}{indent}..{}", items_count - max_count);
             }
         }
     }
@@ -196,9 +193,9 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
             let count = self.projects().len();
 
             if count == 1 {
-                outln!("List steps of {count} project");
+                outln!("List items of {count} project");
             } else {
-                outln!("List steps of {count} projects");
+                outln!("List items of {count} projects");
             }
         }
 
@@ -222,7 +219,7 @@ impl<ID: HashedId + Clone + Display> DisplayList<ID> for FsTracker<ID> {
 
             self.display_project_title(project, consist, Some(title_key), config);
             outln!();
-            self.display_steps_list("", "", project, config);
+            self.display_items_list("", "", project, config);
 
             is_first_project = false;
         }
@@ -331,14 +328,14 @@ fn display_nested_projecs<'a, ID>(
         } else {
             ""
         };
-        let steps_prefix = if is_last_project {
+        let items_prefix = if is_last_project {
             let trim_prefix = prefix.trim_end_matches("│");
             let space = if trim_prefix.len() < prefix.len() { " " } else { "" };
             format!("{trim_prefix}{space}{child_prefix}")
         } else {
             format!("{prefix}{child_prefix}")
         };
-        tracker.display_steps_list(steps_prefix, "  ", project, config);
+        tracker.display_items_list(items_prefix, "  ", project, config);
 
         if let Some(children) = children {
             display_nested_projecs(tracker, children, subprojects, config, format!("{prefix}  │"));

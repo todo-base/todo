@@ -7,9 +7,8 @@ use fs_err::File;
 use function_name::named;
 use temp_testdir::TempDir;
 use tests::init_logger;
-use todo_lib::issue::{Issue, Milestone};
+use todo_lib::issue::{Issue, IssueSet};
 use todo_lib::plan::Plan;
-use todo_lib::plan::Step::*;
 use todo_tracker_fs::Placement;
 use todo_tracker_fs::generator::IntIdGenerator;
 use todo_tracker_fs::plan::LoadProjectPlan;
@@ -71,46 +70,32 @@ Some section content.
 
 #[track_caller]
 fn assert_task_list_plan(plan: &Plan<u64>) {
-    assert_eq!(plan.steps().into_iter().copied().collect::<Vec<_>>(), vec![
-        Issue(1),
-        Issue(2),
-        Issue(3),
-        Issue(4),
-        Milestone(5),
-        Issue(6),
-        Issue(7),
-        Issue(8),
-        Issue(9),
-        Issue(10),
-        Issue(11),
-        Issue(12),
-        Issue(13),
-        Issue(14),
-        Issue(15),
-        Issue(16),
-        Issue(17),
-        Milestone(18),
-        Issue(19),
+    let issue_ids: Vec<u64> = plan.issues().keys().copied().collect();
+    assert_eq!(issue_ids, vec![
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
     ]);
+
+    let set_names: Vec<&str> = plan.sets().keys().map(|s| s.as_str()).collect();
+    assert_eq!(set_names, vec!["Mile 1", "Mile 2"]);
 
     assert_eq!(*plan.get_issue(&1).unwrap(), Issue::new(1, "task A").with_subissue(2));
     assert_eq!(*plan.get_issue(&2).unwrap(), Issue::new(2, "task AA").with_parent_id(1));
     assert_eq!(*plan.get_issue(&3).unwrap(), Issue::new(3, "task B [Mile 2](#mile-2)"));
     assert_eq!(*plan.get_issue(&4).unwrap(), Issue::new(4, "task C"));
     assert_eq!(
+        *plan.get_issue(&5).unwrap(),
+        Issue::new(5, "task D").with_content("One line description")
+    );
+    assert_eq!(
         *plan.get_issue(&6).unwrap(),
-        Issue::new(6, "task D").with_content("One line description")
+        Issue::new(6, "task E").with_subissue(7).with_subissue(8)
     );
+    assert_eq!(*plan.get_issue(&7).unwrap(), Issue::new(7, "task EA").with_parent_id(6));
+    assert_eq!(*plan.get_issue(&8).unwrap(), Issue::new(8, "task EB").with_parent_id(6));
+    assert_eq!(*plan.get_issue(&9).unwrap(), Issue::new(9, "task F"));
     assert_eq!(
-        *plan.get_issue(&7).unwrap(),
-        Issue::new(7, "task E").with_subissue(8).with_subissue(9)
-    );
-    assert_eq!(*plan.get_issue(&8).unwrap(), Issue::new(8, "task EA").with_parent_id(7));
-    assert_eq!(*plan.get_issue(&9).unwrap(), Issue::new(9, "task EB").with_parent_id(7));
-    assert_eq!(*plan.get_issue(&10).unwrap(), Issue::new(10, "task F"));
-    assert_eq!(
-        *plan.get_issue(&11).unwrap(),
-        Issue::new(11, "task G").with_content(
+        *plan.get_issue(&10).unwrap(),
+        Issue::new(10, "task G").with_content(
             r"Multi line
 description
 
@@ -120,50 +105,52 @@ block
         )
     );
     assert_eq!(
+        *plan.get_issue(&11).unwrap(),
+        Issue::new(11, "task H").with_subissue(12).with_subissue(15)
+    );
+    assert_eq!(
         *plan.get_issue(&12).unwrap(),
-        Issue::new(12, "task H").with_subissue(13).with_subissue(16)
+        Issue::new(12, "task HA")
+            .with_parent_id(11)
+            .with_subissue(13)
+            .with_subissue(14)
     );
     assert_eq!(
         *plan.get_issue(&13).unwrap(),
-        Issue::new(13, "task HA")
+        Issue::new(13, "task HAA")
             .with_parent_id(12)
-            .with_subissue(14)
-            .with_subissue(15)
-    );
-    assert_eq!(
-        *plan.get_issue(&14).unwrap(),
-        Issue::new(14, "task HAA")
-            .with_parent_id(13)
             .with_content("Deep level description")
     );
     assert_eq!(
-        *plan.get_issue(&15).unwrap(),
-        Issue::new(15, "task HAB").with_parent_id(13)
+        *plan.get_issue(&14).unwrap(),
+        Issue::new(14, "task HAB").with_parent_id(12)
     );
     assert_eq!(
-        *plan.get_issue(&16).unwrap(),
-        Issue::new(16, "task HB").with_parent_id(12)
+        *plan.get_issue(&15).unwrap(),
+        Issue::new(15, "task HB").with_parent_id(11)
     );
-    assert_eq!(*plan.get_issue(&17).unwrap(), Issue::new(17, "task I"));
+    assert_eq!(*plan.get_issue(&16).unwrap(), Issue::new(16, "task I"));
 
     assert_eq!(
-        *plan.get_milestone(&5).unwrap(),
-        Milestone::new(5, "Mile 1").with_needed_issue(4)
+        *plan.get_set("Mile 1").unwrap(),
+        IssueSet::new("Mile 1")
+            .with_issue(5)
+            .with_issue(6)
+            .with_issue(7)
+            .with_issue(8)
+            .with_issue(9)
+            .with_issue(10)
+            .with_issue(11)
+            .with_issue(12)
+            .with_issue(13)
+            .with_issue(14)
+            .with_issue(15)
+            .with_issue(16)
     );
+    assert_eq!(*plan.get_set("Mile 2").unwrap(), IssueSet::new("Mile 2").with_issue(17));
     assert_eq!(
-        *plan.get_milestone(&18).unwrap(),
-        Milestone::new(18, "Mile 2")
-            .with_needed_issue(11)
-            .with_needed_issue(12)
-            .with_needed_issue(13)
-            .with_needed_issue(14)
-            .with_needed_issue(15)
-            .with_needed_issue(16)
-            .with_needed_issue(17)
-    );
-    assert_eq!(
-        *plan.get_issue(&19).unwrap(),
-        Issue::new(19, "task K")
+        *plan.get_issue(&17).unwrap(),
+        Issue::new(17, "task K")
             .with_content_file_and_note(BASIC_TASK_FILE_PATH, "Trailing description first line.\nSecond line")
     );
 }
@@ -254,6 +241,96 @@ List 3:
     let plan = Plan::load(&Placement::CodeBlockInFile(manifest_file_path), &id_generator)?.unwrap();
 
     assert_task_list_plan(&plan);
+
+    Ok(())
+}
+
+#[test]
+#[named]
+fn subsets() -> anyhow::Result<()> {
+    init_logger();
+
+    let temp_dir = TempDir::default();
+    let project_root = create_temp_project_root_dir(&temp_dir, function_name!())?;
+    let todo_file_path = project_root.join("TODO.md");
+
+    let text = r"
+- top task A
+
+# Set 1
+
+- task 1A
+- task 1B
+
+## Sub set 1.1
+
+- task 1.1A
+
+## Sub set 1.2
+
+- task 1.2A
+- task 1.2B
+
+# Set 2
+
+- task 2A
+";
+
+    File::create(todo_file_path.clone())?.write_all(text.as_bytes())?;
+
+    let id_generator = IntIdGenerator::new(1);
+    let plan = Plan::load(&Placement::WholeFile(todo_file_path), &id_generator)?.unwrap();
+
+    let set_names: Vec<_> = plan.sets().keys().map(|set_name| set_name.as_str()).collect();
+    assert_eq!(set_names, vec![
+        "Set 1",
+        "Set 1/Sub set 1.1",
+        "Set 1/Sub set 1.2",
+        "Set 2"
+    ]);
+
+    let issue = Issue::new(1, "top task A");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert!(plan.find_sets(&issue.id).next().is_none());
+
+    let set_1 = IssueSet::new("Set 1").with_issue(2).with_issue(3);
+    assert_eq!(*plan.get_set(&set_1.name).unwrap(), set_1);
+
+    let issue = Issue::new(2, "task 1A");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(plan.find_sets(&issue.id).next().unwrap().name, set_1.name);
+
+    let issue = Issue::new(3, "task 1B");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(plan.find_sets(&issue.id).next().unwrap().name, set_1.name);
+
+    let set_1_1 = IssueSet::new("Set 1/Sub set 1.1").with_issue(4);
+    assert_eq!(*plan.get_set(&set_1_1.name).unwrap(), set_1_1);
+
+    let issue = Issue::new(4, "task 1.1A");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(plan.find_sets(&issue.id).next().unwrap().name, set_1_1.name);
+
+    let set_1_2 = IssueSet::new("Set 1/Sub set 1.2").with_issue(5).with_issue(6);
+    assert_eq!(*plan.get_set(&set_1_2.name).unwrap(), set_1_2);
+
+    let issue = Issue::new(5, "task 1.2A");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(plan.find_sets(&issue.id).next().unwrap().name, set_1_2.name);
+
+    let issue = Issue::new(6, "task 1.2B");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(plan.find_sets(&issue.id).next().unwrap().name, set_1_2.name);
+
+    let set_2 = IssueSet::new("Set 2").with_issue(7);
+    assert_eq!(*plan.get_set(&set_2.name).unwrap(), set_2);
+
+    let issue = Issue::new(7, "task 2A");
+    assert_eq!(*plan.get_issue(&issue.id).unwrap(), issue);
+    assert_eq!(
+        plan.find_sets(&issue.id).next().map(|set| set.name.as_str()),
+        Some("Set 2")
+    );
 
     Ok(())
 }

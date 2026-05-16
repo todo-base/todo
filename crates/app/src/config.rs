@@ -180,8 +180,8 @@ pub struct DisplayProjectTitleConfig {
 
     pub id_and_name_after: Option<Cow<'static, str>>,
 
-    #[serde(default = "DisplayProjectTitleConfig::default_show_steps_count")]
-    pub show_steps_count: bool,
+    #[serde(default = "DisplayProjectTitleConfig::default_show_items_count")]
+    pub show_items_count: bool,
 }
 
 impl Default for DisplayProjectTitleConfig {
@@ -195,7 +195,7 @@ impl Default for DisplayProjectTitleConfig {
             id_and_name_before: None,
             id_and_name_separator: Self::default_id_and_name_separator(),
             id_and_name_after: None,
-            show_steps_count: Self::default_show_steps_count(),
+            show_items_count: Self::default_show_items_count(),
         }
     }
 }
@@ -213,7 +213,7 @@ impl DisplayProjectTitleConfig {
         Some(Cow::Borrowed(" "))
     }
 
-    pub const fn default_show_steps_count() -> bool {
+    pub const fn default_show_items_count() -> bool {
         true
     }
 }
@@ -222,8 +222,8 @@ impl DisplayProjectTitleConfig {
 #[serde(default)]
 pub struct DisplayProjectConfig {
     pub title: DisplayProjectTitleConfig,
-    pub max_steps: Option<usize>,
-    pub show_substeps: bool,
+    pub max_items: Option<usize>,
+    pub show_subitems: bool,
     pub compact: bool,
     pub separate_projects: bool,
 }
@@ -424,9 +424,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn update_display_project(&mut self, force_compact: bool, force_pretty: bool, force_max_steps: Option<usize>) {
-        if let Some(max_steps) = force_max_steps {
-            self.display.project.max_steps = Some(max_steps);
+    pub fn update_display_project(&mut self, force_compact: bool, force_pretty: bool, force_max_items: Option<usize>) {
+        if let Some(max_items) = force_max_items {
+            self.display.project.max_items = Some(max_items);
         }
 
         if force_compact != force_pretty {
