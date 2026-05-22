@@ -17,8 +17,6 @@ todo-lib = { workspace = true }
 todo-tracker-fs = { workspace = true }
 
 [dev-dependencies]
-assert_cmd = { workspace = true }
 md-cli-test = { workspace = true }
-pulldown-cmark = { workspace = true }
 regex = { workspace = true }
 temp_testdir = { workspace = true }
