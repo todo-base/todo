@@ -93,7 +93,7 @@ args:
 $ todo tree .
 Trees of 2 projects
 
-[project A]: 6
+[project A]: 5
   - To complete task 1
   - Some other task 2
 
@@ -103,7 +103,7 @@ Trees of 2 projects
   - Some other task 4
   - final task
 
-[project B]: 6
+[project B]: 5
   - To complete task 1
   - Some other task 2
 
@@ -119,7 +119,7 @@ $ cd "project A"
 $ todo tree
 Tree of 1 project
 
-[project A]: 6
+[project A]: 5
   - To complete task 1
   - Some other task 2
 
@@ -135,7 +135,7 @@ $ cd "project B"
 $ todo tree
 Tree of 1 project
 
-[project B]: 6
+[project B]: 5
   - To complete task 1
   - Some other task 2
 
@@ -182,7 +182,7 @@ $ echo "- To complete task 1
 $ todo tree .
 Trees of 4 projects
 
-[project A]: 6
+[project A]: 5
   │  - To complete task 1
   │  - Some other task 2
   │
@@ -196,7 +196,7 @@ Trees of 4 projects
        - To complete task 1
        - Some other task 2
 
-[project B]: 6
+[project B]: 5
   │  - To complete task 1
   │  - Some other task 2
   │
@@ -215,11 +215,11 @@ $ echo r#"[display.project.title]
 consist = "id"
 id_before = "["
 id_after = "]"
-show_steps_count = true
+show_items_count = true
 
 [display.project]
-max_steps = 4
-show_substeps = true
+max_items = 4
+show_subitems = true
 compact = false
 separate_projects = true
 "# > "todo.toml"
@@ -229,12 +229,12 @@ separate_projects = true
 $ todo tree .
 Trees of 4 projects
 
-[project A]: 9
+[project A]: 8
   │  - To complete task 1
   │    - Subtask 1
   │    - Subtask 2
   │  - Some other task 2
-  │  ..5
+  │  ..4
   │
   └─ [project C]: 4
        - To complete task 1
@@ -242,12 +242,12 @@ Trees of 4 projects
          - Subtask 2
        - Some other task 2
 
-[project B]: 9
+[project B]: 8
   │  - To complete task 1
   │    - Subtask 1
   │    - Subtask 2
   │  - Some other task 2
-  │  ..5
+  │  ..4
   │
   └─ [project D]: 2
        - To complete task 1
@@ -255,10 +255,10 @@ Trees of 4 projects
 ```
 
 ```sh
-$ todo tree --max-steps 6 "project A"
+$ todo tree --max-items 5 "project A"
 Trees of 2 projects
 
-[project A]: 9
+[project A]: 8
   │  - To complete task 1
   │    - Subtask 1
   │    - Subtask 2
@@ -277,10 +277,10 @@ Trees of 2 projects
 ```
 
 ```sh
-$ todo tree --max-steps 7 "project B"
+$ todo tree --max-items 6 "project B"
 Trees of 2 projects
 
-[project B]: 9
+[project B]: 8
   │  - To complete task 1
   │    - Subtask 1
   │    - Subtask 2

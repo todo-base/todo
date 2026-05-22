@@ -128,39 +128,38 @@ impl<ID: HashedId> Issue<ID> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Milestone<ID> {
-    pub id: ID,
+pub struct IssueSet<ID> {
     pub name: String,
-    pub needed_issues: IndexSet<ID>,
+    pub issues: IndexSet<ID>,
 }
 
-impl<ID: HashedId + PartialEq> PartialEq for Milestone<ID> {
+impl<ID: HashedId + PartialEq> PartialEq for IssueSet<ID> {
     fn eq(&self, other: &Self) -> bool {
-        let Milestone {
-            id,
-            name,
-            needed_issues,
-        } = self;
+        let IssueSet { name, issues } = self;
 
-        *id == other.id && *name == other.name && *needed_issues == other.needed_issues
+        *name == other.name && *issues == other.issues
     }
 }
 
-impl<ID: HashedId> Eq for Milestone<ID> {}
+impl<ID: HashedId> Eq for IssueSet<ID> {}
 
-impl<ID> Milestone<ID> {
-    pub fn new(id: ID, name: impl Into<String>) -> Self {
+impl<ID> IssueSet<ID> {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
-            id,
             name: name.into(),
-            needed_issues: Default::default(),
+            issues: Default::default(),
         }
     }
 }
 
-impl<ID: HashedId> Milestone<ID> {
-    pub fn with_needed_issue(mut self, issue_id: ID) -> Self {
-        self.needed_issues.insert(issue_id);
+impl<ID: HashedId> IssueSet<ID> {
+    pub fn with_issue(mut self, issue_id: ID) -> Self {
+        self.add(issue_id);
+        self
+    }
+
+    pub fn add(&mut self, issue_id: ID) -> &mut Self {
+        self.issues.insert(issue_id);
         self
     }
 }

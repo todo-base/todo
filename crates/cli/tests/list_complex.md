@@ -85,13 +85,13 @@ args:
 "# > "project B/project B.manifest.md"
 ````
 
-## List steps from complex file
+## List items from complex file
 
 ```sh
 $ todo list .
-List steps of 2 projects
+List items of 2 projects
 
-[project A]: 6
+[project A]: 5
 - To complete task 1
 - Some other task 2
 
@@ -101,7 +101,7 @@ List steps of 2 projects
 - Some other task 4
 - final task
 
-[project B]: 6
+[project B]: 5
 - To complete task 1
 - Some other task 2
 
@@ -115,9 +115,9 @@ List steps of 2 projects
 ```sh
 $ cd "project A"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
-[project A]: 6
+[project A]: 5
 - To complete task 1
 - Some other task 2
 
@@ -131,9 +131,9 @@ List steps of 1 project
 ```sh
 $ cd "project B"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
-[project B]: 6
+[project B]: 5
 - To complete task 1
 - Some other task 2
 

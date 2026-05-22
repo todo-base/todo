@@ -31,7 +31,7 @@ Error: could not find `Project.toml` or `*.manifest.md` in `${current_dir_path}`
 
 ```sh
 $ todo list .
-List steps of 4 projects
+List items of 4 projects
 
 [project A]: 0
 
@@ -44,7 +44,7 @@ List steps of 4 projects
 
 ```sh
 $ todo list "project A"
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 0
 
@@ -55,14 +55,14 @@ List steps of 3 projects
 
 ```sh
 $ todo list --project "project A"
-List steps of 1 project
+List items of 1 project
 
 [project A]: 0
 ```
 
 ```sh
 $ todo list --project "./project A"
-List steps of 1 project
+List items of 1 project
 
 [project A]: 0
 ```
@@ -70,7 +70,7 @@ List steps of 1 project
 ```sh
 $ cd "project A"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project A]: 0
 ```
@@ -78,7 +78,7 @@ List steps of 1 project
 ```sh
 $ cd "project A"
 $ todo list .
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 0
 
@@ -90,12 +90,12 @@ List steps of 3 projects
 ```sh
 $ cd "project A/project C"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project C]: 0
 ```
 
-## List one step
+## List one item
 
 ```sh
 $ cd "project A"
@@ -105,7 +105,7 @@ $ todo add "task 1"
 
 ```sh
 $ todo list .
-List steps of 4 projects
+List items of 4 projects
 
 [project A]: 1
 - task 1
@@ -119,7 +119,7 @@ List steps of 4 projects
 
 ```sh
 $ todo list "project A"
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 1
 - task 1
@@ -131,7 +131,7 @@ List steps of 3 projects
 
 ```sh
 $ todo list --project "project A"
-List steps of 1 project
+List items of 1 project
 
 [project A]: 1
 - task 1
@@ -140,7 +140,7 @@ List steps of 1 project
 ```sh
 $ cd "project A"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project A]: 1
 - task 1
@@ -149,7 +149,7 @@ List steps of 1 project
 ```sh
 $ cd "project A"
 $ todo list .
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 1
 - task 1
@@ -159,7 +159,7 @@ List steps of 3 projects
 [project A/project D]: 0
 ```
 
-## List multiple steps
+## List multiple items
 
 ```sh
 $ cd "project A"
@@ -175,7 +175,7 @@ $ todo add "task 1"
 
 ```sh
 $ todo list .
-List steps of 4 projects
+List items of 4 projects
 
 [project A]: 2
 - task 1
@@ -191,7 +191,7 @@ List steps of 4 projects
 
 ```sh
 $ todo list "project A"
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 2
 - task 1
@@ -206,7 +206,7 @@ List steps of 3 projects
 ```sh
 $ cd "project A"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project A]: 2
 - task 1
@@ -216,7 +216,7 @@ List steps of 1 project
 ```sh
 $ cd "project A/project C"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project C]: 1
 - task 1
@@ -242,7 +242,7 @@ $ todo add "task D-1"
 
 ```sh
 $ todo list .
-List steps of 4 projects
+List items of 4 projects
 
 [project A]: 3
 - task 1
@@ -261,7 +261,7 @@ List steps of 4 projects
 
 ```sh
 $ todo list "project A"
-List steps of 3 projects
+List items of 3 projects
 
 [project A]: 3
 - task 1
@@ -278,7 +278,7 @@ List steps of 3 projects
 
 ```sh
 $ todo list --project "project A"
-List steps of 1 project
+List items of 1 project
 
 [project A]: 3
 - task 1
@@ -289,7 +289,7 @@ List steps of 1 project
 ```sh
 $ cd "project A/project C"
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [project C]: 2
 - task 1
@@ -298,7 +298,7 @@ List steps of 1 project
 
 ```sh
 $ todo list --project "project D"
-List steps of 1 project
+List items of 1 project
 
 [project D]: 1
 - task D-1
@@ -318,7 +318,7 @@ $ todo add --first "task B-2"
 
 ```sh
 $ todo list .
-List steps of 4 projects
+List items of 4 projects
 
 [project A]: 3
 - task 1
@@ -339,7 +339,7 @@ List steps of 4 projects
 
 ```sh
 $ todo list --project "project B"
-List steps of 1 project
+List items of 1 project
 
 [project B]: 2
 - task B-2
@@ -360,7 +360,7 @@ path = "non-existent"
 
 ```sh
 $ todo -g list
-List steps of 1 project
+List items of 1 project
 
 [project A]: 3
 - task 1

@@ -11,3 +11,8 @@ fn tree_test_cases() {
 fn tree_complex_test_cases() {
     run_test_cases("tests/tree_complex.md").unwrap();
 }
+
+#[test]
+fn tree_issue_set_test_cases() {
+    run_test_cases("tests/tree_issue_set.md").unwrap();
+}

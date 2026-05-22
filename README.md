@@ -58,7 +58,7 @@ List issues of the project:
 
 ```sh
 $ todo list
-List steps of 1 project
+List items of 1 project
 
 [Life goals]: 3
 - raise a son

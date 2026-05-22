@@ -16,3 +16,8 @@ fn list_complex_test_cases() {
 fn list_display_test_cases() {
     run_test_cases("tests/list_display.md").unwrap();
 }
+
+#[test]
+fn list_issue_set_test_cases() {
+    run_test_cases("tests/list_issue_set.md").unwrap();
+}

@@ -37,21 +37,21 @@ fn main() -> anyhow::Result<()> {
             command::add_issue(location, order, issue, &config)?;
         },
         Command::List(List {
-            max_steps,
+            max_items,
             display,
             location,
             project_location,
         }) => {
-            config.update_display_project(display.compact, display.pretty, max_steps);
+            config.update_display_project(display.compact, display.pretty, max_items);
             command::list(location, project_location, &config)?;
         },
         Command::Tree(Tree {
-            max_steps,
+            max_items,
             display,
             location,
             project_location,
         }) => {
-            config.update_display_project(display.compact, display.pretty, max_steps);
+            config.update_display_project(display.compact, display.pretty, max_items);
             command::tree(location, project_location, &config)?;
         },
     }

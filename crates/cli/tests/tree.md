@@ -55,10 +55,10 @@ $ echo r#"[display.project.title]
 consist = "id"
 id_before = ""
 id_after = ""
-show_steps_count = false
+show_items_count = false
 
 [display.project]
-max_steps = 3
+max_items = 3
 compact = true
 separate_projects = false
 "# > "todo.toml"
@@ -93,7 +93,7 @@ $ todo tree
 project C
 ```
 
-## Tree with one step
+## Tree with one item
 
 ```sh
 $ cd "project A"
@@ -127,7 +127,7 @@ project A
   └─ project D
 ```
 
-## Tree with multiple steps
+## Tree with multiple items
 
 ```sh
 $ cd "project A"

@@ -1,18 +1,49 @@
+use std::mem;
 use std::str::FromStr;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use todo_lib::issue::{Issue, IssueContent, Milestone};
+use todo_lib::id::HashedId;
+use todo_lib::issue::{Issue, IssueContent};
 
 use crate::generator::IdGenerator;
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Header {
+    pub level: usize,
+    pub name: String,
+}
+
+impl Header {
+    pub fn new(level: usize, name: impl Into<String>) -> Self {
+        Self {
+            level,
+            name: name.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Item<ID> {
     Empty,
     Separator,
     Issue(Issue<ID>),
-    Milestone(Milestone<ID>),
+    Header(Header),
     Text(String),
 }
+
+impl<ID: HashedId + PartialEq> PartialEq for Item<ID> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Issue(left), Self::Issue(right)) => left == right,
+            (Self::Header(left), Self::Header(right)) => left == right,
+            (Self::Text(left), Self::Text(right)) => left == right,
+            _ => mem::discriminant(self) == mem::discriminant(other),
+        }
+    }
+}
+
+impl<ID: HashedId> Eq for Item<ID> {}
 
 impl<ID: FromStr> Item<ID> {
     pub fn parse<GEN: IdGenerator<Id = ID>>(line: impl Into<String>, id_generator: GEN) -> (Self, usize) {
@@ -28,8 +59,13 @@ impl<ID: FromStr> Item<ID> {
             Item::Issue(Issue::parse_line(line_trimmed, id_generator))
         } else if SEPARATOR_REGEX.is_match(&line) {
             Item::Separator
-        } else if <Milestone<ID> as ParseLine<GEN>>::regex().is_match(&line) {
-            Item::Milestone(Milestone::parse_line(line_trimmed, id_generator))
+        } else if let Some(captures) = header_regex().captures(&line) {
+            let level = captures.get(1).map(|hashes| hashes.as_str().len()).unwrap_or(1);
+            let name = captures
+                .get(2)
+                .map(|mat| mat.as_str().trim().to_string())
+                .unwrap_or_default();
+            Item::Header(Header { level, name })
         } else {
             Item::Text(line)
         };
@@ -41,6 +77,11 @@ impl<ID: FromStr> Item<ID> {
 pub trait ParseLine<GEN> {
     fn regex() -> &'static Regex;
     fn parse_line(line: &str, id_generator: GEN) -> Self;
+}
+
+fn header_regex() -> &'static Regex {
+    static HEADER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#+)\s+(.*)").expect("regex must be correct"));
+    &HEADER_REGEX
 }
 
 fn issue_name_filelink_regex() -> &'static Regex {
@@ -111,40 +152,6 @@ where
     }
 }
 
-impl<ID, GEN> ParseLine<GEN> for Milestone<ID>
-where
-    ID: FromStr,
-    GEN: IdGenerator<Id = ID>,
-{
-    fn regex() -> &'static Regex {
-        static MILESTONE_REGEX: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r"^#\s+([0-9]+\s)?\s*(.*)").expect("regex must be correct"));
-        &MILESTONE_REGEX
-    }
-
-    fn parse_line(line: &str, id_generator: GEN) -> Self {
-        let captures = <Self as ParseLine<GEN>>::regex().captures(line);
-
-        let id = captures
-            .as_ref()
-            .and_then(|caps| caps.get(1))
-            .and_then(|value| value.as_str().trim().parse().ok())
-            .unwrap_or_else(|| id_generator.next());
-
-        let name = captures
-            .as_ref()
-            .and_then(|caps| caps.get(2))
-            .map(|mat| mat.as_str().trim().to_string())
-            .unwrap_or_default();
-
-        Self {
-            id,
-            name,
-            needed_issues: Default::default(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,23 +175,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_milestone() {
+    fn parse_header() {
         let id_generator = IntIdGenerator::new(1);
 
-        let milestone =
-            <Milestone<u64> as ParseLine<&IntIdGenerator>>::parse_line("# Milestone without id", &id_generator);
-        assert_eq!(milestone.id, 1);
-        assert_eq!(milestone.name, "Milestone without id");
+        let (item, _) = Item::<u64>::parse("# Header level 1", &id_generator);
+        assert_eq!(item, Item::Header(Header::new(1, "Header level 1")));
 
-        let milestone =
-            <Milestone<u64> as ParseLine<&IntIdGenerator>>::parse_line("# 25 Milestone with id", &id_generator);
-        assert_eq!(milestone.id, 25);
-        assert_eq!(milestone.name, "Milestone with id");
+        let (item, _) = Item::<u64>::parse("## Header level 2", &id_generator);
+        assert_eq!(item, Item::Header(Header::new(2, "Header level 2")));
 
-        let milestone =
-            <Milestone<u64> as ParseLine<&IntIdGenerator>>::parse_line("# 25Milestone without id", &id_generator);
-        assert_eq!(milestone.id, 2);
-        assert_eq!(milestone.name, "25Milestone without id");
+        let (item, _) = Item::<u64>::parse("### Header level 3", &id_generator);
+        assert_eq!(item, Item::Header(Header::new(3, "Header level 3")));
     }
 
     #[test]
@@ -200,7 +201,8 @@ mod tests {
             ("", Item::Empty),
             ("---", Item::Separator),
             ("", Item::Empty),
-            ("# Milestone", Item::Milestone(Milestone::new(3, "Milestone"))),
+            ("# Set", Item::Header(Header::new(1, "Set"))),
+            ("## Sub set", Item::Header(Header::new(2, "Sub set"))),
         ];
 
         for (line, item) in pairs {
@@ -212,14 +214,13 @@ mod tests {
                     assert_eq!(issue.id, parsed_issue.id);
                     assert_eq!(issue.name, parsed_issue.name);
                 },
-                (Item::Milestone(milestone), Item::Milestone(parsed_milestone)) => {
-                    assert_eq!(milestone.id, parsed_milestone.id);
-                    assert_eq!(milestone.name, parsed_milestone.name);
+                (Item::Header(header), Item::Header(parsed_header)) => {
+                    assert_eq!(header, parsed_header);
                 },
                 (Item::Text(text), Item::Text(parsed_text)) => {
                     assert_eq!(text, parsed_text);
                 },
-                _ => panic!(),
+                _ => panic!("Incorrect parse result"),
             }
         }
     }

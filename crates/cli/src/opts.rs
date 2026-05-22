@@ -82,9 +82,9 @@ pub struct AddIssue {
 
 #[derive(Parser, Clone)]
 pub struct List {
-    /// Maximum number of steps in the list (project issues and milestones)
-    #[arg(short = 's', long)]
-    pub max_steps: Option<usize>,
+    /// Maximum number of issues in the list
+    #[arg(short = 'i', long)]
+    pub max_items: Option<usize>,
 
     #[command(flatten)]
     pub display: DisplayMode,
@@ -92,16 +92,16 @@ pub struct List {
     /// Listing root location (exists directory path by example, current directory by default)
     pub location: Option<String>,
 
-    /// The location of the project to show its list of steps
+    /// The location of the project to show its list of items
     #[command(flatten)]
     pub project_location: ProjectLocation,
 }
 
 #[derive(Parser, Clone)]
 pub struct Tree {
-    /// Maximum number of steps in the tree (project issues and milestones)
-    #[arg(short = 's', long)]
-    pub max_steps: Option<usize>,
+    /// Maximum number of issues in the tree
+    #[arg(short = 'i', long)]
+    pub max_items: Option<usize>,
 
     #[command(flatten)]
     pub display: DisplayMode,
