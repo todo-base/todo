@@ -5,6 +5,7 @@ pub mod config;
 pub mod file;
 pub mod generator;
 pub mod issue;
+pub mod patch;
 pub mod placement;
 pub mod plan;
 pub mod project;

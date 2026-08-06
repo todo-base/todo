@@ -19,22 +19,22 @@ $ echo "- To complete task 1
   - Subtask 3
 - Some other task 4
 
-args:
---project (-p)
---project-id
---project-name
---project-path
+  args:
+  --project (-p)
+  --project-id
+  --project-name
+  --project-path
 
-      UI         STORAGE
------------------------------
-|  cli  web  |  tracker-fs  |
-|  ...       |  tracker-db  |  INTERFACE
-|            |  ...         |
------------------------------
-|           app             |  APP LOGIC
------------------------------
-|           lib             |  DOMAIN
------------------------------
+        UI         STORAGE
+  -----------------------------
+  |  cli  web  |  tracker-fs  |
+  |  ...       |  tracker-db  |  INTERFACE
+  |            |  ...         |
+  -----------------------------
+  |           app             |  APP LOGIC
+  -----------------------------
+  |           lib             |  DOMAIN
+  -----------------------------
 
 - final task
 " > "project A/TODO.md"
@@ -64,22 +64,22 @@ name = "project B"
   - Subtask 3
 - Some other task 4
 
-args:
---project (-p)
---project-id
---project-name
---project-path
+  args:
+  --project (-p)
+  --project-id
+  --project-name
+  --project-path
 
-      UI         STORAGE
------------------------------
-|  cli  web  |  tracker-fs  |
-|  ...       |  tracker-db  |  INTERFACE
-|            |  ...         |
------------------------------
-|           app             |  APP LOGIC
------------------------------
-|           lib             |  DOMAIN
------------------------------
+        UI         STORAGE
+  -----------------------------
+  |  cli  web  |  tracker-fs  |
+  |  ...       |  tracker-db  |  INTERFACE
+  |            |  ...         |
+  -----------------------------
+  |           app             |  APP LOGIC
+  -----------------------------
+  |           lib             |  DOMAIN
+  -----------------------------
 
 - final task
 "# > "project B/project B.manifest.md"

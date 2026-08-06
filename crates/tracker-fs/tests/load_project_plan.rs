@@ -27,6 +27,7 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 # Mile 1
 
 - task D
+
   One line description
 - task E
   - task EA
@@ -36,6 +37,7 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 ---
 
 - task G
+
   Multi line
   description
 
@@ -46,6 +48,7 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 - task H
   - task HA
     - task HAA
+
       Deep level description
 
     - task HAB
@@ -75,7 +78,7 @@ fn assert_task_list_plan(plan: &Plan<u64>) {
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
     ]);
 
-    let set_names: Vec<&str> = plan.sets().keys().map(|s| s.as_str()).collect();
+    let set_names: Vec<&str> = plan.sets().keys().map(|set_name| set_name.as_str()).collect();
     assert_eq!(set_names, vec!["Mile 1", "Mile 2"]);
 
     assert_eq!(*plan.get_issue(&1).unwrap(), Issue::new(1, "task A").with_subissue(2));

@@ -1402,6 +1402,7 @@ dependencies = [
  "function_name",
  "indexmap 2.14.0",
  "once_cell",
+ "pulldown-cmark",
  "regex",
  "serde",
  "temp_testdir",

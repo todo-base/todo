@@ -58,14 +58,28 @@ pub fn add_issue(
     issue_name: impl AsRef<str> + Into<String>,
     config: &Config,
 ) -> anyhow::Result<()> {
+    let order = order
+        .into_order()
+        .unwrap_or_else(|| config.issue.add_order.into_order());
+    let project_metadata = locate_project(location, config)?;
+
+    outln!(
+        "    Adding `{}` issue to `{}` project",
+        issue_name.as_ref(),
+        project_metadata.name()
+    );
+
+    issue::add(ProjectData::Fs(project_metadata), &config.source, order, issue_name, "")?;
+    Ok(())
+}
+
+/// Resolve a project's metadata from a CLI [`ProjectLocation`].
+fn locate_project(location: ProjectLocation, config: &Config) -> anyhow::Result<FsProjectMetadata<String>> {
     let current_dir = env::current_dir()?;
     let location = location
         .into_location()
         .map(Ok)
         .unwrap_or_else(|| project::default_path(&current_dir, &config.source).map(Location::Path))?;
-    let order = order
-        .into_order()
-        .unwrap_or_else(|| config.issue.add_order.into_order());
 
     let Some(project_config) = locate_project_config(location, [&current_dir], config)? else {
         return Err(anyhow!(
@@ -81,17 +95,17 @@ pub fn add_issue(
         project_config.root_dir.as_deref().unwrap_or(Path::new("")),
         project_config.name.as_deref(),
     );
-    let project_metadata = FsProjectMetadata::default()
+    Ok(FsProjectMetadata::default()
         .with_config_placement_maybe(config_placement)
-        .with_config(project_config);
+        .with_config(project_config))
+}
 
-    outln!(
-        "    Adding `{}` issue to `{}` project",
-        issue_name.as_ref(),
-        project_metadata.name()
-    );
+pub fn rename_issue(location: ProjectLocation, name: String, new_name: String, config: &Config) -> anyhow::Result<()> {
+    let project_metadata = locate_project(location, config)?;
 
-    issue::add(ProjectData::Fs(project_metadata), &config.source, order, issue_name, "")?;
+    outln!("    Renaming `{name}` issue in `{}` project", project_metadata.name());
+
+    issue::rename(ProjectData::Fs(project_metadata), &config.source, name, &new_name)?;
     Ok(())
 }
 

@@ -1,155 +1,417 @@
-use std::mem;
+//! CommonMark reader: parse a markdown source into a [`ParsedPlan`] using
+//! `pulldown-cmark`'s `OffsetIter`.
+//!
+//! Mapping:
+//! - list items (`-`/`*`/`+`) → issues; nesting → parent/subissue
+//! - ATX headings (`#`) → sets (name = `/`-joined heading stack; an issue belongs to the heading scope active when it
+//!   appears)
+//! - first paragraph of an item → issue name (numeric prefix → id); a single leading `[name](file)` link →
+//!   `IssueContent::Linked`
+//! - remaining direct-child blocks (paragraphs, code blocks, …) → description, dedented to the item's content indent
+//! - thematic break (`---`) → ignored (decorative)
+//!
+//! `issue_spans` records the full byte range of each item (incl. nested
+//! children + description) for in-place edits.
+
+use std::ops::Range;
 use std::str::FromStr;
 
+use indexmap::{IndexMap, IndexSet};
 use once_cell::sync::Lazy;
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use todo_lib::id::HashedId;
-use todo_lib::issue::{Issue, IssueContent};
+use todo_lib::issue::{Issue, IssueContent, IssueSet};
+use todo_lib::plan::Plan;
 
 use crate::generator::IdGenerator;
+use crate::patch;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Header {
-    pub level: usize,
-    pub name: String,
+/// A parsed plan together with byte spans of each issue's list item in `source`.
+pub struct ParsedPlan<ID> {
+    pub plan: Plan<ID>,
+    pub issue_spans: IndexMap<ID, Range<usize>>,
+    pub name_spans: IndexMap<ID, Range<usize>>,
+    pub content_spans: IndexMap<ID, Range<usize>>,
 }
 
-impl Header {
-    pub fn new(level: usize, name: impl Into<String>) -> Self {
+fn gfm_options() -> Options {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options
+}
+
+fn heading_level_num(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+static ID_PREFIX_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[[:space:]]*([0-9]+)[[:space:]]+(.*)$").expect("regex must be correct"));
+
+/// Trim `source[start..end]` to non-whitespace bounds; if it begins with a
+/// numeric id prefix return the parsed id and the borrowed remainder bounds.
+fn name_span(source: &str, start: usize, end: usize) -> (Option<usize>, usize, usize) {
+    let (from, to) = trim_span(source, start, end);
+    if let Some(caps) = ID_PREFIX_REGEX.captures(&source[from..to]) {
+        let id = caps.get(1).and_then(|id_match| id_match.as_str().parse::<usize>().ok());
+        let rest = caps.get(2).expect("second group is mandatory");
+        (id, from + rest.start(), from + rest.end())
+    } else {
+        (None, from, to)
+    }
+}
+
+fn trim_span(source: &str, start: usize, end: usize) -> (usize, usize) {
+    let bytes = source.as_bytes();
+    let (mut from, mut to) = (start, end);
+    while from < to && bytes[from].is_ascii_whitespace() {
+        from += 1;
+    }
+    while to > from && bytes[to - 1].is_ascii_whitespace() {
+        to -= 1;
+    }
+    (from, to)
+}
+
+struct RawItem<ID> {
+    parent_idx: Option<usize>,
+    item_range: Range<usize>,
+    list_depth: usize,
+    set_name: Option<String>,
+    first_block_done: bool,
+    in_name_block: bool,
+    name_started: bool,
+    name_start: usize,
+    name_end: usize,
+    text_before_link: bool,
+    in_link: bool,
+    link_dest: Option<String>,
+    link_text_start: usize,
+    link_text_end: usize,
+    link_end: usize,
+    desc_start: Option<usize>,
+    desc_end: usize,
+    id_override: Option<ID>,
+    content: IssueContent,
+    name_span: Option<Range<usize>>,
+    content_span: Option<Range<usize>>,
+}
+
+impl<ID> RawItem<ID> {
+    fn new(parent_idx: Option<usize>, item_range: Range<usize>, list_depth: usize) -> Self {
+        let item_start = item_range.start;
         Self {
-            level,
-            name: name.into(),
+            parent_idx,
+            item_range,
+            list_depth,
+            set_name: None,
+            first_block_done: false,
+            in_name_block: false,
+            name_started: false,
+            name_start: item_start,
+            name_end: item_start,
+            text_before_link: false,
+            in_link: false,
+            link_dest: None,
+            link_text_start: item_start,
+            link_text_end: item_start,
+            link_end: 0,
+            desc_start: None,
+            desc_end: 0,
+            id_override: None,
+            content: IssueContent::Empty,
+            name_span: None,
+            content_span: None,
         }
     }
-}
 
-#[derive(Debug)]
-pub enum Item<ID> {
-    Empty,
-    Separator,
-    Issue(Issue<ID>),
-    Header(Header),
-    Text(String),
-}
+    fn is_filelink(&self) -> bool {
+        self.link_dest.is_some() && !self.text_before_link && self.link_text_end > self.link_text_start
+    }
 
-impl<ID: HashedId + PartialEq> PartialEq for Item<ID> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Issue(left), Self::Issue(right)) => left == right,
-            (Self::Header(left), Self::Header(right)) => left == right,
-            (Self::Text(left), Self::Text(right)) => left == right,
-            _ => mem::discriminant(self) == mem::discriminant(other),
+    fn begin_name(&mut self, at: usize) {
+        if !self.name_started {
+            self.name_start = at;
+            self.name_started = true;
         }
     }
-}
 
-impl<ID: HashedId> Eq for Item<ID> {}
-
-impl<ID: FromStr> Item<ID> {
-    pub fn parse<GEN: IdGenerator<Id = ID>>(line: impl Into<String>, id_generator: GEN) -> (Self, usize) {
-        static SEPARATOR_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^-{3,}\s?.*").expect("regex must be correct"));
-
-        let line = line.into();
-        let line_trimmed = line.trim_start_matches(' ');
-        let line_level = (line.len() - line_trimmed.len()) / 2;
-
-        let item = if line.is_empty() {
-            Item::Empty
-        } else if <Issue<ID> as ParseLine<GEN>>::regex().is_match(&line) {
-            Item::Issue(Issue::parse_line(line_trimmed, id_generator))
-        } else if SEPARATOR_REGEX.is_match(&line) {
-            Item::Separator
-        } else if let Some(captures) = header_regex().captures(&line) {
-            let level = captures.get(1).map(|hashes| hashes.as_str().len()).unwrap_or(1);
-            let name = captures
-                .get(2)
-                .map(|mat| mat.as_str().trim().to_string())
-                .unwrap_or_default();
-            Item::Header(Header { level, name })
-        } else {
-            Item::Text(line)
-        };
-
-        (item, line_level)
+    fn extend_desc(&mut self, range: Range<usize>) {
+        self.desc_start.get_or_insert(range.start);
+        self.desc_end = self.desc_end.max(range.end);
     }
 }
 
-pub trait ParseLine<GEN> {
-    fn regex() -> &'static Regex;
-    fn parse_line(line: &str, id_generator: GEN) -> Self;
-}
-
-fn header_regex() -> &'static Regex {
-    static HEADER_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#+)\s+(.*)").expect("regex must be correct"));
-    &HEADER_REGEX
-}
-
-fn issue_name_filelink_regex() -> &'static Regex {
-    static FILELINK_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^\s*\[(.*)\]\((.*)\)(.*)").expect("regex must be correct"));
-    &FILELINK_REGEX
-}
-
-impl<ID, GEN> ParseLine<GEN> for Issue<ID>
+/// Parse CommonMark `source` into a [`ParsedPlan`].
+pub fn parse<ID, GEN>(source: &str, id_gen: &GEN) -> ParsedPlan<ID>
 where
-    ID: FromStr,
+    ID: HashedId + Clone + FromStr,
     GEN: IdGenerator<Id = ID>,
 {
-    fn regex() -> &'static Regex {
-        static ISSUE_REGEX: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r"^\s*[-+]\s+([0-9]+\s)?\s*(.*)").expect("regex must be correct"));
-        &ISSUE_REGEX
-    }
+    let mut raw_items: Vec<RawItem<ID>> = Vec::new();
+    let mut item_stack: Vec<usize> = Vec::new();
+    let mut list_depth: usize = 0;
 
-    fn parse_line(line: &str, id_generator: GEN) -> Self {
-        let captures = <Self as ParseLine<GEN>>::regex().captures(line);
+    let mut heading_stack: Vec<(usize, String)> = Vec::new();
+    let mut current_set: Option<String> = None;
+    let mut plan_sets: Vec<String> = Vec::new();
 
-        let id = captures
-            .as_ref()
-            .and_then(|caps| caps.get(1))
-            .and_then(|value| value.as_str().trim().parse().ok())
-            .unwrap_or_else(|| id_generator.next());
+    let mut heading_pending: Option<usize> = None;
+    let mut heading_text = String::new();
 
-        let name = captures
-            .as_ref()
-            .and_then(|caps| caps.get(2))
-            .map(|mat| mat.as_str().trim().to_string())
-            .unwrap_or_default();
+    for (event, range) in Parser::new_ext(source, gfm_options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::List(_)) => list_depth += 1,
+            Event::End(TagEnd::List(_)) => list_depth -= 1,
 
-        let name_captures = issue_name_filelink_regex().captures(&name);
-        let (name, content_file_path, trailing_note) = name_captures
-            .as_ref()
-            .map(|caps| {
-                let name = caps
-                    .get(1)
-                    .map(|value| value.as_str().trim())
-                    .unwrap_or(&name)
-                    .to_string();
-                let content_file = caps.get(2).map(|value| value.as_str().trim().to_string());
-                let trailing_note = caps.get(3).map(|value| value.as_str().trim().to_string());
+            Event::Start(Tag::Heading { level, .. }) => {
+                if item_stack.is_empty() {
+                    heading_pending = Some(heading_level_num(level));
+                    heading_text.clear();
+                } else if let Some(&idx) = item_stack.last() {
+                    // A heading inside a list item is description content
+                    // (e.g. ASCII-art setext-lookalikes), not a set delimiter.
+                    let cur = &mut raw_items[idx];
+                    if list_depth == cur.list_depth && cur.first_block_done {
+                        cur.extend_desc(range);
+                    }
+                }
+            },
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(level) = heading_pending.take() {
+                    while let Some((top, _)) = heading_stack.last() {
+                        if *top >= level {
+                            heading_stack.pop();
+                        } else {
+                            break;
+                        }
+                    }
+                    heading_stack.push((level, heading_text.clone()));
+                    let set_name = heading_stack
+                        .iter()
+                        .map(|(_, heading)| heading.as_str())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    current_set = Some(set_name.clone());
+                    if !plan_sets.contains(&set_name) {
+                        plan_sets.push(set_name);
+                    }
+                }
+            },
 
-                (name, content_file, trailing_note)
-            })
-            .unwrap_or((name, None, None));
+            Event::Start(Tag::Item) => {
+                let mut item = RawItem::new(item_stack.last().copied(), range, list_depth);
+                item.set_name = current_set.clone();
+                item.in_name_block = true;
+                let idx = raw_items.len();
+                raw_items.push(item);
+                item_stack.push(idx);
+            },
+            Event::End(TagEnd::Item) => {
+                let idx = item_stack.pop().expect("item stack balanced");
+                let cur = &mut raw_items[idx];
+                if cur.in_name_block {
+                    finalize_name(cur, source);
+                }
+                finalize_item(cur, source);
+            },
 
-        let content = if let Some(path) = content_file_path {
-            IssueContent::Linked {
-                file: path.into(),
-                note: trailing_note,
-            }
-        } else {
-            IssueContent::Empty
-        };
+            Event::Start(Tag::Paragraph) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if list_depth == cur.list_depth && !cur.in_name_block && cur.first_block_done {
+                        cur.extend_desc(range);
+                    }
+                }
+            },
+            Event::Start(Tag::CodeBlock(_)) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if list_depth == cur.list_depth {
+                        if cur.in_name_block {
+                            finalize_name(cur, source);
+                        }
+                        cur.extend_desc(range);
+                    }
+                }
+            },
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if cur.in_name_block {
+                        finalize_name(cur, source);
+                    }
+                }
+            },
 
-        Self {
-            id,
-            name,
-            parent_id: None,
-            content,
-            subissues: Default::default(),
-            relations: Default::default(),
+            Event::Text(text) => {
+                if heading_pending.is_some() {
+                    heading_text.push_str(text.as_ref());
+                } else if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if cur.in_name_block {
+                        cur.begin_name(range.start);
+                        if cur.in_link {
+                            if cur.link_text_end <= cur.link_text_start {
+                                cur.link_text_start = range.start;
+                            }
+                            cur.link_text_end = range.end;
+                        } else {
+                            if cur.link_dest.is_none() {
+                                cur.text_before_link = true;
+                            }
+                            cur.name_end = cur.name_end.max(range.end);
+                        }
+                    }
+                }
+            },
+            Event::Code(_) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if cur.in_name_block && !cur.in_link && cur.link_dest.is_none() {
+                        cur.begin_name(range.start);
+                        cur.text_before_link = true;
+                        cur.name_end = cur.name_end.max(range.end);
+                    }
+                }
+            },
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if cur.in_name_block {
+                        cur.begin_name(range.start);
+                        cur.in_link = true;
+                        cur.link_dest = Some(dest_url.into_string());
+                        cur.link_text_start = range.start;
+                        cur.link_text_end = range.start;
+                    }
+                }
+            },
+            Event::End(TagEnd::Link) => {
+                if let Some(&idx) = item_stack.last() {
+                    let cur = &mut raw_items[idx];
+                    if cur.in_name_block {
+                        cur.in_link = false;
+                        cur.link_end = range.end;
+                        cur.name_end = cur.name_end.max(range.end);
+                    }
+                }
+            },
+
+            _ => {},
         }
     }
+
+    // Second pass: assign ids, build Issues, link parent/subissue, attach sets.
+    let ids: Vec<ID> = raw_items
+        .iter()
+        .map(|raw| raw.id_override.clone().unwrap_or_else(|| id_gen.next()))
+        .collect();
+
+    let mut children: Vec<IndexSet<ID>> = vec![IndexSet::new(); raw_items.len()];
+    let mut set_membership: Vec<Option<String>> = Vec::with_capacity(raw_items.len());
+    for (index, raw) in raw_items.iter().enumerate() {
+        if let Some(parent_index) = raw.parent_idx {
+            children[parent_index].insert(ids[index].clone());
+        }
+        set_membership.push(raw.set_name.clone());
+    }
+
+    let mut plan = Plan::new();
+    let mut issue_spans: IndexMap<ID, Range<usize>> = IndexMap::new();
+    let mut name_spans: IndexMap<ID, Range<usize>> = IndexMap::new();
+    let mut content_spans: IndexMap<ID, Range<usize>> = IndexMap::new();
+    for ((index, raw), child_set) in raw_items.into_iter().enumerate().zip(children) {
+        let id = ids[index].clone();
+        let name_span = raw.name_span;
+        let content_span = raw.content_span;
+        let name = name_span
+            .as_ref()
+            .map(|span| &source[span.start..span.end])
+            .unwrap_or_default();
+        let mut issue = Issue::new(id.clone(), name);
+        issue.parent_id = raw.parent_idx.map(|parent_index| ids[parent_index].clone());
+        issue.content = raw.content;
+        issue.subissues = child_set;
+        plan.add_issue(issue);
+        issue_spans.insert(id.clone(), raw.item_range);
+        if let Some(span) = name_span {
+            name_spans.insert(id.clone(), span);
+        }
+        if let Some(span) = content_span {
+            content_spans.insert(id.clone(), span);
+        }
+    }
+    for set_name in &plan_sets {
+        plan.add_set(IssueSet::new(set_name.clone()));
+    }
+    for (index, set_name) in set_membership.iter().enumerate() {
+        if let Some(name) = set_name {
+            plan.add_issue_to_set(name, ids[index].clone());
+        }
+    }
+
+    ParsedPlan {
+        plan,
+        issue_spans,
+        name_spans,
+        content_spans,
+    }
+}
+
+fn finalize_name<ID: FromStr>(cur: &mut RawItem<ID>, source: &str) {
+    let is_filelink = cur.is_filelink();
+    let (start, end) = if is_filelink {
+        (cur.link_text_start, cur.link_text_end)
+    } else {
+        (cur.name_start, cur.name_end)
+    };
+    let (id_num, from, to) = name_span(source, start, end);
+    cur.name_span = Some(from..to);
+    cur.id_override = id_num.and_then(|parsed_id| parsed_id.to_string().parse::<ID>().ok());
+    cur.first_block_done = true;
+    cur.in_name_block = false;
+}
+
+fn finalize_item<ID>(cur: &mut RawItem<ID>, source: &str) {
+    let is_filelink = cur.is_filelink();
+    let indent = patch::item_content_indent(source, cur.item_range.start);
+    let (content, content_span) = if is_filelink {
+        let dest = cur.link_dest.take().unwrap_or_default();
+        let (from, to) = trim_span(source, cur.link_end, cur.item_range.end);
+        let note = (from < to).then(|| patch::dedent_lines(&source[from..to], indent));
+        let span = (from < to).then_some(from..to);
+        (
+            IssueContent::Linked {
+                file: dest.into(),
+                note,
+            },
+            span,
+        )
+    } else if let Some(start) = cur.desc_start {
+        let (from, to) = trim_span(source, start, cur.desc_end);
+        if from < to {
+            (
+                IssueContent::Inline(patch::dedent_lines(&source[from..to], indent)),
+                Some(from..to),
+            )
+        } else {
+            (IssueContent::Empty, None)
+        }
+    } else {
+        (IssueContent::Empty, None)
+    };
+    cur.content = content;
+    cur.content_span = content_span;
 }
 
 #[cfg(test)]
@@ -157,71 +419,67 @@ mod tests {
     use super::*;
     use crate::generator::IntIdGenerator;
 
-    #[test]
-    fn parse_issue() {
-        let id_generator = IntIdGenerator::new(1);
-
-        let issue = <Issue<u64> as ParseLine<&IntIdGenerator>>::parse_line("- task without id", &id_generator);
-        assert_eq!(issue.id, 1);
-        assert_eq!(issue.name, "task without id");
-
-        let issue = <Issue<u64> as ParseLine<&IntIdGenerator>>::parse_line("- 25 task with id", &id_generator);
-        assert_eq!(issue.id, 25);
-        assert_eq!(issue.name, "task with id");
-
-        let issue = <Issue<u64> as ParseLine<&IntIdGenerator>>::parse_line("- 25task without id", &id_generator);
-        assert_eq!(issue.id, 2);
-        assert_eq!(issue.name, "25task without id");
+    fn plan_of(src: &str) -> Plan<u64> {
+        parse::<u64, _>(src, &IntIdGenerator::new(1)).plan
     }
 
     #[test]
-    fn parse_header() {
-        let id_generator = IntIdGenerator::new(1);
-
-        let (item, _) = Item::<u64>::parse("# Header level 1", &id_generator);
-        assert_eq!(item, Item::Header(Header::new(1, "Header level 1")));
-
-        let (item, _) = Item::<u64>::parse("## Header level 2", &id_generator);
-        assert_eq!(item, Item::Header(Header::new(2, "Header level 2")));
-
-        let (item, _) = Item::<u64>::parse("### Header level 3", &id_generator);
-        assert_eq!(item, Item::Header(Header::new(3, "Header level 3")));
+    fn plain_issues_and_nesting() {
+        let plan = plan_of("- a\n  - aa\n- b\n");
+        let ids: Vec<u64> = plan.issues().keys().copied().collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(*plan.get_issue(&1).unwrap(), Issue::new(1, "a").with_subissue(2));
+        assert_eq!(*plan.get_issue(&2).unwrap(), Issue::new(2, "aa").with_parent_id(1));
+        assert_eq!(plan.get_issue(&3).unwrap().name, "b");
     }
 
     #[test]
-    fn parse_item() {
-        let id_generator = IntIdGenerator::new(1);
-        let pairs = [
-            ("Task list", Item::Text("Task list".into())),
-            ("---", Item::Separator),
-            ("", Item::Empty),
-            ("- Task 1", Item::Issue(Issue::new(1, "Task 1"))),
-            ("  task 1 description", Item::Text("  task 1 description".into())),
-            ("  - Subtask 1", Item::Issue(Issue::new(2, "Subtask 1"))),
-            ("", Item::Empty),
-            ("---", Item::Separator),
-            ("", Item::Empty),
-            ("# Set", Item::Header(Header::new(1, "Set"))),
-            ("## Sub set", Item::Header(Header::new(2, "Sub set"))),
-        ];
+    fn numeric_id_prefix() {
+        let plan = plan_of("- 25 named\n- auto\n");
+        assert_eq!(plan.get_issue(&25).unwrap().name, "named");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "auto");
+    }
 
-        for (line, item) in pairs {
-            let parsed_item = Item::parse(line, &id_generator).0;
-            match (item, parsed_item) {
-                (Item::Empty, Item::Empty) => {},
-                (Item::Separator, Item::Separator) => {},
-                (Item::Issue(issue), Item::Issue(parsed_issue)) => {
-                    assert_eq!(issue.id, parsed_issue.id);
-                    assert_eq!(issue.name, parsed_issue.name);
-                },
-                (Item::Header(header), Item::Header(parsed_header)) => {
-                    assert_eq!(header, parsed_header);
-                },
-                (Item::Text(text), Item::Text(parsed_text)) => {
-                    assert_eq!(text, parsed_text);
-                },
-                _ => panic!("Incorrect parse result"),
-            }
+    #[test]
+    fn headings_define_sets() {
+        let plan = plan_of("- a\n# Mile 1\n- b\n");
+        let names: Vec<&str> = plan.sets().keys().map(|set_name| set_name.as_str()).collect();
+        assert_eq!(names, vec!["Mile 1"]);
+        // "a" appears before the heading → no set; "b" → "Mile 1"
+        assert_eq!(
+            plan.get_set("Mile 1")
+                .unwrap()
+                .issues
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn filelink_issue() {
+        let plan = plan_of("- [task K](task-k.md) trailing note\n");
+        let issue = plan.get_issue(&1).unwrap();
+        assert_eq!(issue.name, "task K");
+        match &issue.content {
+            IssueContent::Linked { file, note } => {
+                assert_eq!(file.to_str().unwrap(), "task-k.md");
+                assert_eq!(note.as_deref(), Some("trailing note"));
+            },
+            other => panic!("expected Linked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn description_is_dedented() {
+        // a blank line separates the name from the description paragraph
+        let plan = plan_of("- g\n\n  Multi line\n  description\n");
+        let issue = plan.get_issue(&1).unwrap();
+        assert_eq!(issue.name, "g");
+        match &issue.content {
+            IssueContent::Inline(content) => assert_eq!(content, "Multi line\ndescription"),
+            other => panic!("expected Inline, got {other:?}"),
         }
     }
 }

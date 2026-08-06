@@ -1,20 +1,14 @@
-use std::io::{self, BufRead};
-use std::mem;
+use std::io;
 use std::path::Path;
 use std::str::FromStr;
 
-use either::Either;
 use fs_err as fs;
-use indexmap::IndexMap;
 use todo_lib::id::HashedId;
-use todo_lib::issue::{Issue, IssueContent, IssueSet};
 use todo_lib::plan::Plan;
 
-use self::parse::Item;
 use crate::Placement;
 use crate::generator::IdGenerator;
 use crate::issue::{MD_BLOCK_END, MD_BLOCK_START};
-use crate::plan::parse::Header;
 
 pub mod parse;
 
@@ -22,306 +16,63 @@ pub trait LoadProjectPlan<GEN> {
     type Id;
 
     fn load(source: &Placement<impl AsRef<Path>>, id_generator: GEN) -> io::Result<Option<Plan<Self::Id>>>;
-
-    fn load_to_lines(
-        source: &Placement<impl AsRef<Path>>,
-    ) -> io::Result<impl IntoIterator<Item = (usize, io::Result<String>)>>;
-
-    fn load_from_lines(
-        lines: impl IntoIterator<Item = (usize, io::Result<String>)>,
-        id_generator: GEN,
-    ) -> io::Result<Plan<Self::Id>>;
 }
 
 impl<ID, GEN> LoadProjectPlan<GEN> for Plan<ID>
 where
-    ID: HashedId + Clone + FromStr,
+    ID: HashedId + Clone + PartialEq + FromStr,
     GEN: IdGenerator<Id = ID> + Copy,
 {
     type Id = ID;
 
     fn load(source: &Placement<impl AsRef<Path>>, id_generator: GEN) -> io::Result<Option<Plan<Self::Id>>> {
-        if source.as_ref().as_ref().exists() {
-            let lines = <Self as LoadProjectPlan<GEN>>::load_to_lines(source)?;
-            let plan = Self::load_from_lines(lines, id_generator)?;
-
-            Ok(Some(plan))
-        } else {
-            Ok(None)
+        let path = source.as_ref().as_ref();
+        if !path.exists() {
+            return Ok(None);
         }
-    }
-
-    fn load_to_lines(
-        source: &Placement<impl AsRef<Path>>,
-    ) -> io::Result<impl IntoIterator<Item = (usize, io::Result<String>)>> {
-        let lines = match source {
-            Placement::WholeFile(path) => {
-                let file = fs::File::open(path.as_ref())?;
-                Either::Left(io::BufReader::new(file).lines().enumerate())
-            },
-            Placement::CodeBlockInFile(path) => {
-                let file = fs::File::open(path.as_ref())?;
-
-                let mut in_block = false;
-                let mut inner_blocks: usize = 0;
-                Either::Right(io::BufReader::new(file).lines().enumerate().filter(move |(_, line)| {
-                    let Ok(line) = line else {
-                        return false;
-                    };
-
-                    if !in_block {
-                        if let Some(start) = line.get(..line.len().min(MD_BLOCK_START.len() + 1))
-                            && start.trim().to_lowercase() == MD_BLOCK_START
-                        {
-                            in_block = true;
-                        }
-                        false
-                    } else {
-                        let line = line.trim_end();
-                        if line.starts_with(MD_BLOCK_END) {
-                            if line.chars().nth(3).map(|ch| !ch.is_whitespace()).unwrap_or(false) {
-                                inner_blocks += 1;
-                            } else if inner_blocks == 0 {
-                                in_block = false;
-                            } else {
-                                inner_blocks -= 1;
-                            }
-                        }
-                        in_block
-                    }
-                }))
-            },
+        let content = fs::read_to_string(path)?;
+        let plan_src: &str = match source {
+            Placement::WholeFile(_) => content.as_str(),
+            Placement::CodeBlockInFile(_) => extract_md_todo_block(&content).map(|(_, block)| block).unwrap_or(""),
         };
-        Ok(lines)
-    }
-
-    fn load_from_lines(
-        lines: impl IntoIterator<Item = (usize, io::Result<String>)>,
-        id_generator: GEN,
-    ) -> io::Result<Plan<Self::Id>> {
-        let mut planned = Plan::<ID>::new();
-        let mut last = Last::<ID>::new();
-
-        for (line_idx, line) in lines {
-            let line = line?;
-
-            match Item::parse(line, id_generator) {
-                (Item::Empty, _) => {
-                    if let Line::Separator = last.line {
-                        last.flush_issues(&mut planned);
-                    } else {
-                        last.intermediate_blank.push('\n');
-                    }
-                    last.line = Line::Empty;
-                },
-                (Item::Separator, _) => {
-                    if let Line::Empty = last.line {
-                        last.line = Line::Separator;
-                    } else {
-                        last.line = Line::Other;
-                    }
-                },
-                (Item::Issue(mut issue), issue_level) => {
-                    if issue_level == last.issue_level {
-                        if let (Line::Issue | Line::Description | Line::Empty, Some(id)) =
-                            (last.line, last.issue_parent_id.clone())
-                        {
-                            last.parsed_issues
-                                .get_mut(&id)
-                                .expect("issue for previous parent must parsed")
-                                .subissues
-                                .insert(issue.id.clone());
-                            issue.parent_id = Some(id);
-                        }
-                    } else if issue_level != 0 {
-                        let parent_issue = if issue_level == last.issue_level + 1 {
-                            last.parsed_issues.last_mut().map(|(_, last_issue)| last_issue)
-                        } else if issue_level < last.issue_level {
-                            last.find_parent(issue_level)
-                        } else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!(
-                                    "in line {line_idx}: issue level = {issue_level} is greater than previous issue level + 1 = {}",
-                                    last.issue_level + 1
-                                ),
-                            ));
-                        }.ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!(
-                                    "in line {line_idx}: parent not found for issue level = {issue_level}"
-                                ),
-                            )
-                        })?;
-
-                        parent_issue.subissues.insert(issue.id.clone());
-                        issue.parent_id = Some(parent_issue.id.clone());
-                    }
-
-                    last.insert_issue(issue, issue_level);
-                    last.line = Line::Issue;
-                },
-                (Item::Header(header), _) => {
-                    last.flush_issues(&mut planned);
-                    last.update_header(header);
-
-                    let set_name = last.actual_set_name();
-
-                    if planned.get_set(&set_name).is_none() {
-                        planned.add_set(IssueSet::new(set_name.clone()));
-                    }
-                    last.current_set_name = Some(set_name);
-                    last.line = Line::Header;
-                },
-                (Item::Text(text), text_level) => {
-                    if matches!(last.line, Line::Issue | Line::Description | Line::Empty)
-                        && text_level > last.issue_level
-                    {
-                        let mut padding = (last.issue_level + 1) * 2;
-                        let description_line = text.trim_start_matches(|ch| {
-                            if padding > 0 && ch == ' ' {
-                                true
-                            } else {
-                                padding -= 1;
-                                false
-                            }
-                        });
-
-                        let target_issue = last
-                            .parsed_issues
-                            .last_mut()
-                            .expect("issue for description must exist")
-                            .1;
-
-                        match &mut target_issue.content {
-                            val @ IssueContent::Empty => {
-                                *val = IssueContent::Inline(description_line.into());
-                            },
-                            IssueContent::Linked { note: val @ None, .. } => {
-                                *val = Some(description_line.into());
-                            },
-                            IssueContent::Inline(content)
-                            | IssueContent::Linked {
-                                note: Some(content), ..
-                            } => {
-                                if !content.is_empty() {
-                                    content.push('\n');
-                                }
-                                if !last.intermediate_blank.is_empty() {
-                                    let blank = mem::take(&mut last.intermediate_blank);
-                                    content.push_str(&blank);
-                                }
-
-                                content.push_str(description_line);
-                            },
-                        }
-
-                        last.line = Line::Description;
-                    } else if text.trim().is_empty() {
-                        last.intermediate_blank.push_str(&text);
-                        last.intermediate_blank.push('\n');
-                        last.line = Line::Empty;
-                    } else {
-                        last.line = Line::Other;
-                    }
-                },
-            }
-
-            if last.line != Line::Empty {
-                last.intermediate_blank.clear();
-            }
-        }
-        last.flush_issues(&mut planned);
-
-        Ok(planned)
+        let parsed = parse::parse::<ID, GEN>(plan_src, &id_generator);
+        Ok(Some(parsed.plan))
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum Line {
-    #[default]
-    None,
-    Empty,
-    Separator,
-    Issue,
-    Description,
-    Header,
-    Other,
-}
-
-#[derive(Debug, Default)]
-struct Last<ID> {
-    issue_level: usize,
-    issue_parent_id: Option<ID>,
-    intermediate_blank: String,
-    line: Line,
-    parsed_issues: IndexMap<ID, Issue<ID>>,
-    header_stack: Vec<Header>,
-    current_set_name: Option<String>,
-}
-
-impl<ID: HashedId + PartialEq + Clone> Last<ID> {
-    fn new() -> Self {
-        Self {
-            issue_level: 0,
-            issue_parent_id: None,
-            intermediate_blank: String::new(),
-            line: Line::None,
-            parsed_issues: IndexMap::new(),
-            header_stack: Vec::new(),
-            current_set_name: None,
+/// Extract the inner text of a ` ```md todo ` fenced block (for
+/// [`Placement::CodeBlockInFile`]). Returns `None` if no such block is present.
+/// Accounts for nested code fences inside the block.
+pub fn extract_md_todo_block(content: &str) -> Option<(usize, &str)> {
+    let start_prefix = format!("{MD_BLOCK_START} ");
+    let mut offset = 0usize;
+    let mut block_start: Option<usize> = None;
+    let mut inner: usize = 0;
+    for line in content.split_inclusive('\n') {
+        let line_end = offset + line.len();
+        let trimmed = line.trim_end();
+        match block_start {
+            None => {
+                let lower = trimmed.trim_start().to_ascii_lowercase();
+                if lower == MD_BLOCK_START || lower.starts_with(&start_prefix) {
+                    block_start = Some(line_end);
+                    inner = 0;
+                }
+            },
+            Some(start) => {
+                if trimmed.trim_start().starts_with(MD_BLOCK_END) {
+                    if trimmed.chars().nth(3).map(|ch| !ch.is_whitespace()).unwrap_or(false) {
+                        inner += 1;
+                    } else if inner == 0 {
+                        return Some((start, &content[start..offset]));
+                    } else {
+                        inner -= 1;
+                    }
+                }
+            },
         }
+        offset = line_end;
     }
-
-    fn find_parent(&mut self, item_level: usize) -> Option<&mut Issue<ID>> {
-        let diff = self.issue_level - item_level;
-
-        let mut parent_issue_idx = self.parsed_issues.get_index_of(self.issue_parent_id.as_ref()?)?;
-        for _ in 0..diff {
-            let parent_issue = self.parsed_issues.get_index(parent_issue_idx)?.1;
-            parent_issue_idx = self.parsed_issues.get_index_of(parent_issue.parent_id.as_ref()?)?;
-        }
-        Some(self.parsed_issues.get_index_mut(parent_issue_idx)?.1)
-    }
-
-    fn insert_issue(&mut self, issue: Issue<ID>, issue_level: usize) {
-        self.issue_parent_id.clone_from(&issue.parent_id);
-        self.issue_level = issue_level;
-        self.parsed_issues.insert(issue.id.clone(), issue);
-    }
-
-    fn extract_issues(&mut self) -> impl IntoIterator<Item = Issue<ID>> + '_ {
-        self.parsed_issues.drain(..).map(|(_, issue)| issue)
-    }
-
-    fn flush_issues(&mut self, planned: &mut Plan<ID>) {
-        let set_name = self.current_set_name.clone();
-        for issue in self.extract_issues() {
-            let id = issue.id.clone();
-            planned.add_issue(issue);
-            if let Some(name) = &set_name {
-                planned.add_issue_to_set(name, id);
-            }
-        }
-    }
-
-    fn update_header(&mut self, header: Header) {
-        while let Some(last_header) = self.header_stack.last() {
-            if last_header.level >= header.level {
-                self.header_stack.pop();
-            } else {
-                break;
-            }
-        }
-        self.header_stack.push(header);
-    }
-
-    fn actual_set_name(&self) -> String {
-        self.header_stack
-            .iter()
-            .map(|header| header.name.as_str())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
+    // unterminated block: take to end of content
+    block_start.map(|start| (start, &content[start..]))
 }

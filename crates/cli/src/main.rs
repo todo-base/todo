@@ -1,7 +1,7 @@
 use clap::Parser;
 use todo_app::config::{Config, SourceConfig};
 
-use crate::opts::{AddIssue, CliOpts, Command, InitProject, List, NewProject, Tree};
+use crate::opts::{AddIssue, CliOpts, Command, InitProject, List, NewProject, RenameIssue, Tree};
 
 mod command;
 mod display;
@@ -35,6 +35,13 @@ fn main() -> anyhow::Result<()> {
         },
         Command::Add(AddIssue { location, order, issue }) => {
             command::add_issue(location, order, issue, &config)?;
+        },
+        Command::Rename(RenameIssue {
+            location,
+            name,
+            new_name,
+        }) => {
+            command::rename_issue(location, name, new_name, &config)?;
         },
         Command::List(List {
             max_items,

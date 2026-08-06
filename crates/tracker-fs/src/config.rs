@@ -9,6 +9,7 @@ use todo_lib::id::HashedId;
 use walkdir::WalkDir;
 
 use crate::Placement;
+use crate::patch::{FileMetaSnapshot, write_if_unchanged};
 
 #[derive(Debug, Error)]
 pub enum LoadConfigError {
@@ -124,7 +125,12 @@ impl<ID: SerializedId> FsProjectConfig<ID> {
         match destination {
             Placement::WholeFile(path) => {
                 let content = self.to_toml()?;
-                fs::write(path, content).map_err(Into::into)
+                if path.as_ref().exists() {
+                    let snapshot = FileMetaSnapshot::capture(path.as_ref())?;
+                    write_if_unchanged(path, &snapshot, &content).map_err(Into::into)
+                } else {
+                    fs::write(path, content).map_err(Into::into)
+                }
             },
             Placement::CodeBlockInFile(path) => {
                 let content = format!(
@@ -135,6 +141,7 @@ impl<ID: SerializedId> FsProjectConfig<ID> {
                 );
 
                 if path.as_ref().exists() {
+                    let snapshot = FileMetaSnapshot::capture(path.as_ref())?;
                     let file_content = fs::read_to_string(path.as_ref())?;
 
                     let mut new_content = String::new();
@@ -158,7 +165,7 @@ impl<ID: SerializedId> FsProjectConfig<ID> {
                         new_content.push_str(&content);
                     }
 
-                    fs::write(path, new_content).map_err(Into::into)
+                    write_if_unchanged(path, &snapshot, &new_content).map_err(Into::into)
                 } else {
                     let project_name = self.name.as_deref().unwrap_or("");
                     fs::write(path, format!("# {project_name}\n\n{content}")).map_err(Into::into)
