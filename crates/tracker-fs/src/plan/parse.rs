@@ -5,9 +5,10 @@
 //! - list items (`-`/`*`/`+`) → issues; nesting → parent/subissue
 //! - ATX headings (`#`) → sets (name = `/`-joined heading stack; an issue belongs to the heading scope active when it
 //!   appears)
-//! - first paragraph of an item → issue name (numeric prefix → id); a single leading `[name](file)` link →
+//! - first line of an item → issue name (numeric prefix → id); a `[name](file)` link opening that line →
 //!   `IssueContent::Linked`
-//! - remaining direct-child blocks (paragraphs, code blocks, …) → description, dedented to the item's content indent
+//! - rest of that line's block, plus the following direct-child blocks (paragraphs, code blocks, …) → description,
+//!   dedented to the item's content indent
 //! - thematic break (`---`) → ignored (decorative)
 //!
 //! `issue_spans` records the full byte range of each item (incl. nested
@@ -17,9 +18,7 @@ use std::ops::Range;
 use std::str::FromStr;
 
 use indexmap::{IndexMap, IndexSet};
-use once_cell::sync::Lazy;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use regex::Regex;
 use todo_lib::id::HashedId;
 use todo_lib::issue::{Issue, IssueContent, IssueSet};
 use todo_lib::plan::Plan;
@@ -54,32 +53,64 @@ fn heading_level_num(level: HeadingLevel) -> usize {
     }
 }
 
-static ID_PREFIX_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[[:space:]]*([0-9]+)[[:space:]]+(.*)$").expect("regex must be correct"));
-
-/// Trim `source[start..end]` to non-whitespace bounds; if it begins with a
-/// numeric id prefix return the parsed id and the borrowed remainder bounds.
-fn name_span(source: &str, start: usize, end: usize) -> (Option<usize>, usize, usize) {
-    let (from, to) = trim_span(source, start, end);
-    if let Some(caps) = ID_PREFIX_REGEX.captures(&source[from..to]) {
-        let id = caps.get(1).and_then(|id_match| id_match.as_str().parse::<usize>().ok());
-        let rest = caps.get(2).expect("second group is mandatory");
-        (id, from + rest.start(), from + rest.end())
-    } else {
-        (None, from, to)
+/// Trim `range` to non-whitespace bounds; a leading `<digits><space>` prefix is
+/// consumed as the issue id.
+fn split_id_prefix<ID: FromStr>(source: &str, range: Range<usize>) -> (Option<ID>, Range<usize>) {
+    let span = trim_span(source, range);
+    let Some((prefix, _)) = source[span.clone()].split_once(char::is_whitespace) else {
+        return (None, span);
+    };
+    if prefix.is_empty() || !prefix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return (None, span);
     }
+    let rest = trim_span(source, span.start + prefix.len()..span.end);
+    (ID::from_str(prefix).ok(), rest)
 }
 
-fn trim_span(source: &str, start: usize, end: usize) -> (usize, usize) {
+fn trim_span(source: &str, range: Range<usize>) -> Range<usize> {
     let bytes = source.as_bytes();
-    let (mut from, mut to) = (start, end);
-    while from < to && bytes[from].is_ascii_whitespace() {
-        from += 1;
+    let Range { mut start, mut end } = range;
+    while start < end && bytes[start].is_ascii_whitespace() {
+        start += 1;
     }
-    while to > from && bytes[to - 1].is_ascii_whitespace() {
-        to -= 1;
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
     }
-    (from, to)
+    start..end
+}
+
+/// End of the first line of `range`; the line break itself is not included.
+fn first_line_end(source: &str, range: &Range<usize>) -> usize {
+    source[range.clone()]
+        .find('\n')
+        .map_or(range.end, |offset| range.start + offset)
+}
+
+/// Offset an item's content starts at: past its list marker (`-`, `*`, `+`, `1.`,
+/// `1)`) and the spaces separating it from the content.
+fn item_content_start(source: &str, item_start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut offset = item_start;
+    if matches!(bytes.get(offset), Some(b'-' | b'*' | b'+')) {
+        offset += 1;
+    } else {
+        while bytes.get(offset).is_some_and(u8::is_ascii_digit) {
+            offset += 1;
+        }
+        if matches!(bytes.get(offset), Some(b'.' | b')')) {
+            offset += 1;
+        }
+    }
+    while matches!(bytes.get(offset), Some(b' ' | b'\t')) {
+        offset += 1;
+    }
+    offset
+}
+
+/// A `[name](file)` link opening an item's first line.
+struct Filelink {
+    range: Range<usize>,
+    dest: String,
 }
 
 struct RawItem<ID> {
@@ -87,17 +118,14 @@ struct RawItem<ID> {
     item_range: Range<usize>,
     list_depth: usize,
     set_name: Option<String>,
-    first_block_done: bool,
+    /// The item's first block has not been read yet: its first line is the name.
     in_name_block: bool,
-    name_started: bool,
-    name_start: usize,
-    name_end: usize,
-    text_before_link: bool,
-    in_link: bool,
-    link_dest: Option<String>,
-    link_text_start: usize,
-    link_text_end: usize,
-    link_end: usize,
+    /// Source range of that first block. Starts as the whole item and is cut back
+    /// to where the next block (a nested list, a code block, …) begins.
+    name_block: Range<usize>,
+    /// Column the item's content starts at, used to dedent its description.
+    content_indent: usize,
+    link: Option<Filelink>,
     desc_start: Option<usize>,
     desc_end: usize,
     id_override: Option<ID>,
@@ -107,41 +135,24 @@ struct RawItem<ID> {
 }
 
 impl<ID> RawItem<ID> {
-    fn new(parent_idx: Option<usize>, item_range: Range<usize>, list_depth: usize) -> Self {
-        let item_start = item_range.start;
+    fn new(source: &str, parent_idx: Option<usize>, item_range: Range<usize>, list_depth: usize) -> Self {
+        let content_start = item_content_start(source, item_range.start);
+        let name_block = content_start..item_range.end;
         Self {
             parent_idx,
             item_range,
             list_depth,
             set_name: None,
-            first_block_done: false,
-            in_name_block: false,
-            name_started: false,
-            name_start: item_start,
-            name_end: item_start,
-            text_before_link: false,
-            in_link: false,
-            link_dest: None,
-            link_text_start: item_start,
-            link_text_end: item_start,
-            link_end: 0,
+            in_name_block: true,
+            name_block,
+            content_indent: patch::content_indent(source, content_start),
+            link: None,
             desc_start: None,
             desc_end: 0,
             id_override: None,
             content: IssueContent::Empty,
             name_span: None,
             content_span: None,
-        }
-    }
-
-    fn is_filelink(&self) -> bool {
-        self.link_dest.is_some() && !self.text_before_link && self.link_text_end > self.link_text_start
-    }
-
-    fn begin_name(&mut self, at: usize) {
-        if !self.name_started {
-            self.name_start = at;
-            self.name_started = true;
         }
     }
 
@@ -170,7 +181,16 @@ where
 
     for (event, range) in Parser::new_ext(source, gfm_options()).into_offset_iter() {
         match event {
-            Event::Start(Tag::List(_)) => list_depth += 1,
+            Event::Start(Tag::List(_)) => {
+                if let Some(&idx) = item_stack.last() {
+                    // Subissues of the item, not a continuation of its name line.
+                    let cur = &mut raw_items[idx];
+                    if list_depth == cur.list_depth && cur.in_name_block {
+                        finalize_name(cur, source, range.start);
+                    }
+                }
+                list_depth += 1;
+            },
             Event::End(TagEnd::List(_)) => list_depth -= 1,
 
             Event::Start(Tag::Heading { level, .. }) => {
@@ -181,7 +201,10 @@ where
                     // A heading inside a list item is description content
                     // (e.g. ASCII-art setext-lookalikes), not a set delimiter.
                     let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth && cur.first_block_done {
+                    if list_depth == cur.list_depth {
+                        if cur.in_name_block {
+                            finalize_name(cur, source, range.start);
+                        }
                         cur.extend_desc(range);
                     }
                 }
@@ -209,9 +232,8 @@ where
             },
 
             Event::Start(Tag::Item) => {
-                let mut item = RawItem::new(item_stack.last().copied(), range, list_depth);
+                let mut item = RawItem::new(source, item_stack.last().copied(), range, list_depth);
                 item.set_name = current_set.clone();
-                item.in_name_block = true;
                 let idx = raw_items.len();
                 raw_items.push(item);
                 item_stack.push(idx);
@@ -220,7 +242,7 @@ where
                 let idx = item_stack.pop().expect("item stack balanced");
                 let cur = &mut raw_items[idx];
                 if cur.in_name_block {
-                    finalize_name(cur, source);
+                    finalize_name(cur, source, range.end);
                 }
                 finalize_item(cur, source);
             },
@@ -228,7 +250,7 @@ where
             Event::Start(Tag::Paragraph) => {
                 if let Some(&idx) = item_stack.last() {
                     let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth && !cur.in_name_block && cur.first_block_done {
+                    if list_depth == cur.list_depth && !cur.in_name_block {
                         cur.extend_desc(range);
                     }
                 }
@@ -238,17 +260,18 @@ where
                     let cur = &mut raw_items[idx];
                     if list_depth == cur.list_depth {
                         if cur.in_name_block {
-                            finalize_name(cur, source);
+                            finalize_name(cur, source, range.start);
                         }
                         cur.extend_desc(range);
                     }
                 }
             },
+            // Only a loose list reports paragraphs; it bounds the name block exactly.
             Event::End(TagEnd::Paragraph) => {
                 if let Some(&idx) = item_stack.last() {
                     let cur = &mut raw_items[idx];
                     if cur.in_name_block {
-                        finalize_name(cur, source);
+                        finalize_name(cur, source, range.end);
                     }
                 }
             },
@@ -256,53 +279,18 @@ where
             Event::Text(text) => {
                 if heading_pending.is_some() {
                     heading_text.push_str(text.as_ref());
-                } else if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if cur.in_name_block {
-                        cur.begin_name(range.start);
-                        if cur.in_link {
-                            if cur.link_text_end <= cur.link_text_start {
-                                cur.link_text_start = range.start;
-                            }
-                            cur.link_text_end = range.end;
-                        } else {
-                            if cur.link_dest.is_none() {
-                                cur.text_before_link = true;
-                            }
-                            cur.name_end = cur.name_end.max(range.end);
-                        }
-                    }
-                }
-            },
-            Event::Code(_) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if cur.in_name_block && !cur.in_link && cur.link_dest.is_none() {
-                        cur.begin_name(range.start);
-                        cur.text_before_link = true;
-                        cur.name_end = cur.name_end.max(range.end);
-                    }
                 }
             },
             Event::Start(Tag::Link { dest_url, .. }) => {
                 if let Some(&idx) = item_stack.last() {
                     let cur = &mut raw_items[idx];
-                    if cur.in_name_block {
-                        cur.begin_name(range.start);
-                        cur.in_link = true;
-                        cur.link_dest = Some(dest_url.into_string());
-                        cur.link_text_start = range.start;
-                        cur.link_text_end = range.start;
-                    }
-                }
-            },
-            Event::End(TagEnd::Link) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if cur.in_name_block {
-                        cur.in_link = false;
-                        cur.link_end = range.end;
-                        cur.name_end = cur.name_end.max(range.end);
+                    // Only a link opening the name line makes the issue a linked one;
+                    // anywhere else it is part of the name or of the description.
+                    if cur.in_name_block && cur.name_block.start == range.start {
+                        cur.link = Some(Filelink {
+                            range,
+                            dest: dest_url.into_string(),
+                        });
                     }
                 }
             },
@@ -368,50 +356,52 @@ where
     }
 }
 
-fn finalize_name<ID: FromStr>(cur: &mut RawItem<ID>, source: &str) {
-    let is_filelink = cur.is_filelink();
-    let (start, end) = if is_filelink {
-        (cur.link_text_start, cur.link_text_end)
-    } else {
-        (cur.name_start, cur.name_end)
-    };
-    let (id_num, from, to) = name_span(source, start, end);
-    cur.name_span = Some(from..to);
-    cur.id_override = id_num.and_then(|parsed_id| parsed_id.to_string().parse::<ID>().ok());
-    cur.first_block_done = true;
+/// Split the item's first block, which ends at `block_end`: its first line is the
+/// issue name — the label of a `[name](file)` link when one opens it — and the
+/// remainder starts the description.
+fn finalize_name<ID: FromStr>(cur: &mut RawItem<ID>, source: &str, block_end: usize) {
     cur.in_name_block = false;
+    cur.name_block.end = cur.name_block.end.min(block_end).max(cur.name_block.start);
+    let block = cur.name_block.clone();
+    let line_end = first_line_end(source, &block);
+
+    let label = cur.link.as_ref().and_then(|link| {
+        let label_start = link.range.start + 1;
+        let label_end = link.range.start + source[link.range.clone()].rfind("](")?;
+        (label_start <= label_end).then_some((label_start..label_end, link.range.end))
+    });
+    let (name, desc_start) = match label {
+        Some((label, link_end)) => (label, link_end),
+        None => {
+            // A reference or autolink carries no file path: it stays in the name.
+            cur.link = None;
+            (block.start..line_end, line_end)
+        },
+    };
+
+    let (id, span) = split_id_prefix(source, name);
+    cur.name_span = Some(span);
+    cur.id_override = id;
+    cur.extend_desc(desc_start..block.end);
 }
 
 fn finalize_item<ID>(cur: &mut RawItem<ID>, source: &str) {
-    let is_filelink = cur.is_filelink();
-    let indent = patch::item_content_indent(source, cur.item_range.start);
-    let (content, content_span) = if is_filelink {
-        let dest = cur.link_dest.take().unwrap_or_default();
-        let (from, to) = trim_span(source, cur.link_end, cur.item_range.end);
-        let note = (from < to).then(|| patch::dedent_lines(&source[from..to], indent));
-        let span = (from < to).then_some(from..to);
-        (
-            IssueContent::Linked {
-                file: dest.into(),
-                note,
-            },
-            span,
-        )
-    } else if let Some(start) = cur.desc_start {
-        let (from, to) = trim_span(source, start, cur.desc_end);
-        if from < to {
-            (
-                IssueContent::Inline(patch::dedent_lines(&source[from..to], indent)),
-                Some(from..to),
-            )
-        } else {
-            (IssueContent::Empty, None)
-        }
-    } else {
-        (IssueContent::Empty, None)
+    let span = cur
+        .desc_start
+        .map(|start| trim_span(source, start..cur.desc_end))
+        .filter(|span| !span.is_empty());
+    let text = span
+        .as_ref()
+        .map(|span| patch::dedent_lines(&source[span.clone()], cur.content_indent));
+
+    cur.content = match cur.link.take() {
+        Some(link) => IssueContent::Linked {
+            file: link.dest.into(),
+            note: text,
+        },
+        None => text.map_or(IssueContent::Empty, IssueContent::Inline),
     };
-    cur.content = content;
-    cur.content_span = content_span;
+    cur.content_span = span;
 }
 
 #[cfg(test)]
@@ -421,6 +411,14 @@ mod tests {
 
     fn plan_of(src: &str) -> Plan<u64> {
         parse::<u64, _>(src, &IntIdGenerator::new(1)).plan
+    }
+
+    #[track_caller]
+    fn assert_content(plan: &Plan<u64>, id: u64, expected: &str) {
+        match &plan.get_issue(&id).unwrap().content {
+            IssueContent::Inline(content) => assert_eq!(content, expected),
+            other => panic!("expected Inline, got {other:?}"),
+        }
     }
 
     #[test]
@@ -457,29 +455,87 @@ mod tests {
         );
     }
 
-    #[test]
-    fn filelink_issue() {
-        let plan = plan_of("- [task K](task-k.md) trailing note\n");
-        let issue = plan.get_issue(&1).unwrap();
-        assert_eq!(issue.name, "task K");
-        match &issue.content {
-            IssueContent::Linked { file, note } => {
-                assert_eq!(file.to_str().unwrap(), "task-k.md");
-                assert_eq!(note.as_deref(), Some("trailing note"));
+    #[track_caller]
+    fn assert_linked(plan: &Plan<u64>, id: u64, file: &str, note: Option<&str>) {
+        match &plan.get_issue(&id).unwrap().content {
+            IssueContent::Linked {
+                file: linked_file,
+                note: linked_note,
+            } => {
+                assert_eq!(linked_file.to_str().unwrap(), file);
+                assert_eq!(linked_note.as_deref(), note);
             },
             other => panic!("expected Linked, got {other:?}"),
         }
     }
 
     #[test]
+    fn filelink_issue() {
+        let plan = plan_of("- [task K](task-k.md) trailing note\n  second line\n");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "task K");
+        assert_linked(&plan, 1, "task-k.md", Some("trailing note\nsecond line"));
+    }
+
+    #[test]
+    fn filelink_subissues_are_not_a_note() {
+        let plan = plan_of("- [task K](task-k.md)\n  - subtask\n");
+        assert_linked(&plan, 1, "task-k.md", None);
+        assert_eq!(plan.get_issue(&2).unwrap().name, "subtask");
+    }
+
+    #[test]
     fn description_is_dedented() {
-        // a blank line separates the name from the description paragraph
         let plan = plan_of("- g\n\n  Multi line\n  description\n");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "g");
+        assert_content(&plan, 1, "Multi line\ndescription");
+    }
+
+    #[test]
+    fn name_ends_at_the_first_line() {
+        let plan = plan_of("- task D\n  One line description\n- task E\n");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "task D");
+        assert_content(&plan, 1, "One line description");
+        assert_eq!(plan.get_issue(&2).unwrap().name, "task E");
+    }
+
+    #[test]
+    fn nested_description_is_dedented_to_its_own_level() {
+        let plan = plan_of("- a\n  - b\n    Multi line\n    description\n");
+        assert_eq!(plan.get_issue(&2).unwrap().name, "b");
+        assert_content(&plan, 2, "Multi line\ndescription");
+    }
+
+    #[test]
+    fn inline_markup_is_kept_in_the_name() {
+        let plan = plan_of("- **bold name** and `code` rest\n");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "**bold name** and `code` rest");
+    }
+
+    #[test]
+    fn name_span_points_at_the_raw_source() {
+        let source = "- 25 **bold name** rest\n";
+        let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1));
+        assert_eq!(&source[parsed.name_spans[&25].clone()], "**bold name** rest");
+    }
+
+    #[test]
+    fn ordered_marker_sets_the_content_indent() {
+        let plan = plan_of("1. first task\n   Multi line\n   description\n");
+        assert_eq!(plan.get_issue(&1).unwrap().name, "first task");
+        assert_content(&plan, 1, "Multi line\ndescription");
+    }
+
+    #[test]
+    fn subissues_are_not_a_description() {
+        let plan = plan_of("- a\n  - b\n");
+        assert_eq!(plan.get_issue(&1).unwrap().content, IssueContent::Empty);
+    }
+
+    #[test]
+    fn link_inside_the_name_is_not_a_file_reference() {
+        let plan = plan_of("- task B [Mile 2](#mile-2)\n");
         let issue = plan.get_issue(&1).unwrap();
-        assert_eq!(issue.name, "g");
-        match &issue.content {
-            IssueContent::Inline(content) => assert_eq!(content, "Multi line\ndescription"),
-            other => panic!("expected Inline, got {other:?}"),
-        }
+        assert_eq!(issue.name, "task B [Mile 2](#mile-2)");
+        assert_eq!(issue.content, IssueContent::Empty);
     }
 }

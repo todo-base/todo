@@ -19,15 +19,11 @@ pub fn replace_range(source: impl AsRef<str>, range: Range<usize>, replacement: 
     out
 }
 
-/// Indent (in spaces) for content lines of an item, computed from its source
-/// start offset (leading spaces of the item's first line + 2 for the `- ` marker).
-pub fn item_content_indent(source: &str, item_start: usize) -> usize {
-    let bytes = source.as_bytes();
-    let mut indent = 0;
-    while item_start + indent < bytes.len() && bytes[item_start + indent] == b' ' {
-        indent += 1;
-    }
-    indent + 2
+/// Indent of the line `content_start` belongs to — the column at which an item's
+/// content, and every continuation line of it, begins.
+pub fn content_indent(source: &str, content_start: usize) -> usize {
+    let line_start = source[..content_start].rfind('\n').map_or(0, |offset| offset + 1);
+    content_start - line_start
 }
 
 /// Strip up to `indent` leading spaces from each line of `text` (logical content).

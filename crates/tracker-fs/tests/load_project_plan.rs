@@ -27,7 +27,6 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 # Mile 1
 
 - task D
-
   One line description
 - task E
   - task EA
@@ -37,7 +36,6 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 ---
 
 - task G
-
   Multi line
   description
 
@@ -48,7 +46,6 @@ static TASK_LIST_TEXT: &str = concatcp!(r"
 - task H
   - task HA
     - task HAA
-
       Deep level description
 
     - task HAB

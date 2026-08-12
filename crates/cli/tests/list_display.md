@@ -18,7 +18,6 @@ $ echo "- To complete task 1
 - Some other task 3
   - Subtask 3
 - Some other task 4
-
   Description of some other task 4
 
 - final task
