@@ -17,8 +17,8 @@
 //! ids skip the ones the source already claims, and spelling the same id out
 //! twice is a [`ParseError`].
 //!
-//! `issue_spans` records the full byte range of each item (incl. nested
-//! children + description) for in-place edits.
+//! [`ParsedPlan`] carries the byte spans every issue occupies in the source, so
+//! a writer can patch one issue in place.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -48,11 +48,16 @@ impl From<ParseError> for io::Error {
     }
 }
 
-/// A parsed plan together with byte spans of each issue's list item in `source`.
+/// A parsed plan together with the byte spans its issues occupy in `source`, so
+/// an edit can rewrite one issue and leave the rest of the file byte-identical.
 pub struct ParsedPlan<ID> {
     pub plan: Plan<ID>,
+    /// The whole list item, its subissues and description included.
     pub issue_spans: IndexMap<ID, Range<usize>>,
+    /// The name alone, as written — markup and all, without the id prefix.
     pub name_spans: IndexMap<ID, Range<usize>>,
+    /// The description as written, still carrying the item's indentation that
+    /// [`IssueContent`] holds stripped. Absent for an issue without one.
     pub content_spans: IndexMap<ID, Range<usize>>,
 }
 
@@ -661,6 +666,53 @@ mod tests {
         let source = "- 25 **bold name** rest\n";
         let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1)).unwrap();
         assert_eq!(&source[parsed.name_spans[&25].clone()], "**bold name** rest");
+    }
+
+    const NESTED_SOURCE: &str = "- parent\n  Desc line\n  - child\n- next\n";
+
+    #[test]
+    fn issue_span_covers_the_item_with_its_subtree() {
+        let parsed = parse::<u64, _>(NESTED_SOURCE, &IntIdGenerator::new(1)).unwrap();
+        let span_of = |id| &NESTED_SOURCE[parsed.issue_spans[&id].clone()];
+        assert_eq!(span_of(1), "- parent\n  Desc line\n  - child\n");
+        assert_eq!(span_of(2), "- child\n");
+        assert_eq!(span_of(3), "- next\n");
+    }
+
+    #[test]
+    fn content_span_keeps_the_source_indentation() {
+        let parsed = parse::<u64, _>(NESTED_SOURCE, &IntIdGenerator::new(1)).unwrap();
+        assert_eq!(&NESTED_SOURCE[parsed.content_spans[&1].clone()], "Desc line");
+        assert_eq!(parsed.content_spans.get(&2), None, "an issue without a description");
+
+        let source = "- g\n  Multi\n  line\n";
+        let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1)).unwrap();
+        // the span carries the indentation; `IssueContent` holds it stripped
+        assert_eq!(&source[parsed.content_spans[&1].clone()], "Multi\n  line");
+        assert_content(&parsed.plan, 1, "Multi\nline");
+    }
+
+    #[test]
+    fn patching_a_span_leaves_the_rest_byte_identical() {
+        let parsed = parse::<u64, _>(NESTED_SOURCE, &IntIdGenerator::new(1)).unwrap();
+
+        let renamed = patch::replace_range(NESTED_SOURCE, parsed.name_spans[&2].clone(), "renamed");
+        assert_eq!(renamed, "- parent\n  Desc line\n  - renamed\n- next\n");
+
+        let rewritten = patch::replace_range(NESTED_SOURCE, parsed.content_spans[&1].clone(), "New desc");
+        assert_eq!(rewritten, "- parent\n  New desc\n  - child\n- next\n");
+
+        let removed = patch::replace_range(NESTED_SOURCE, parsed.issue_spans[&1].clone(), "");
+        assert_eq!(removed, "- next\n");
+    }
+
+    #[test]
+    fn demoted_items_get_no_spans() {
+        let source = "- a\n\n  desc\n\n  - sub\n\n  tail\n";
+        let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1)).unwrap();
+        let ids: Vec<u64> = parsed.issue_spans.keys().copied().collect();
+        assert_eq!(ids, vec![1]);
+        assert_eq!(parsed.name_spans.len(), 1);
     }
 
     #[test]
