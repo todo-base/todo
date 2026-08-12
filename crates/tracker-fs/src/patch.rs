@@ -19,24 +19,6 @@ pub fn replace_range(source: impl AsRef<str>, range: Range<usize>, replacement: 
     out
 }
 
-/// Indent of the line `content_start` belongs to — the column at which an item's
-/// content, and every continuation line of it, begins.
-pub fn content_indent(source: &str, content_start: usize) -> usize {
-    let line_start = source[..content_start].rfind('\n').map_or(0, |offset| offset + 1);
-    content_start - line_start
-}
-
-/// Strip up to `indent` leading spaces from each line of `text` (logical content).
-pub fn dedent_lines(text: &str, indent: usize) -> String {
-    text.lines()
-        .map(|line| {
-            let leading_spaces = line.bytes().take(indent).take_while(|&byte| byte == b' ').count();
-            &line[leading_spaces..]
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Captured file metadata (modification time + size) used to detect that a file
 /// has not changed between reading and writing it.
 #[derive(Clone, Copy)]

@@ -22,9 +22,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::io;
 use std::ops::Range;
 use std::str::FromStr;
+use std::{io, mem};
 
 use indexmap::{IndexMap, IndexSet};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -34,7 +34,6 @@ use todo_lib::issue::{Issue, IssueContent, IssueSet};
 use todo_lib::plan::Plan;
 
 use crate::generator::IdGenerator;
-use crate::patch;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
@@ -69,14 +68,59 @@ fn gfm_options() -> Options {
     options
 }
 
-fn heading_level_num(level: HeadingLevel) -> usize {
-    match level {
-        HeadingLevel::H1 => 1,
-        HeadingLevel::H2 => 2,
-        HeadingLevel::H3 => 3,
-        HeadingLevel::H4 => 4,
-        HeadingLevel::H5 => 5,
-        HeadingLevel::H6 => 6,
+struct Heading {
+    level: usize,
+    name: String,
+}
+
+/// The heading stack, turned into set names: an issue joins the set of the
+/// heading scope active where it appears.
+#[derive(Default)]
+struct SetTracker {
+    stack: Vec<Heading>,
+    current: Option<String>,
+    names: IndexSet<String>,
+    /// Level of the heading being read; its text arrives as separate events.
+    open_level: Option<usize>,
+    text: String,
+}
+
+impl SetTracker {
+    fn open(&mut self, level: HeadingLevel) {
+        self.open_level = Some(level as usize);
+        self.text.clear();
+    }
+
+    fn is_open(&self) -> bool {
+        self.open_level.is_some()
+    }
+
+    fn push_text(&mut self, text: &str) {
+        self.text.push_str(text);
+    }
+
+    /// The heading is complete: it replaces the scopes it closes and becomes the
+    /// set that follows.
+    fn close(&mut self) {
+        let Some(level) = self.open_level.take() else {
+            return;
+        };
+        while self.stack.last().is_some_and(|heading| heading.level >= level) {
+            self.stack.pop();
+        }
+        self.stack.push(Heading {
+            level,
+            name: mem::take(&mut self.text),
+        });
+
+        let name = self
+            .stack
+            .iter()
+            .map(|heading| heading.name.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+        self.current = Some(name.clone());
+        self.names.insert(name);
     }
 }
 
@@ -119,6 +163,24 @@ fn first_line_end(source: &str, range: &Range<usize>) -> usize {
 /// 1-based number of the line `offset` falls on.
 fn line_at(source: &str, offset: usize) -> usize {
     source[..offset].bytes().filter(|&byte| byte == b'\n').count() + 1
+}
+
+/// Indent of the line `content_start` belongs to — the column at which an item's
+/// content, and every continuation line of it, begins.
+fn content_indent(source: &str, content_start: usize) -> usize {
+    let line_start = source[..content_start].rfind('\n').map_or(0, |offset| offset + 1);
+    content_start - line_start
+}
+
+/// Strip up to `indent` leading spaces from each line of `text` (logical content).
+fn dedent_lines(text: &str, indent: usize) -> String {
+    text.lines()
+        .map(|line| {
+            let leading_spaces = line.bytes().take(indent).take_while(|&byte| byte == b' ').count();
+            &line[leading_spaces..]
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Offset an item's content starts at: past its list marker (`-`, `*`, `+`, `1.`,
@@ -198,7 +260,7 @@ impl<ID> RawItem<ID> {
             set_name: None,
             in_name_block: true,
             name_block,
-            content_indent: patch::content_indent(source, content_start),
+            content_indent: content_indent(source, content_start),
             link: None,
             children: Vec::new(),
             subissue_split: 0,
@@ -240,6 +302,12 @@ impl<ID> RawItem<ID> {
     }
 }
 
+/// The item the reader is inside, if any.
+fn current_item<'a, ID>(raw_items: &'a mut [RawItem<ID>], item_stack: &[usize]) -> Option<&'a mut RawItem<ID>> {
+    let &idx = item_stack.last()?;
+    Some(&mut raw_items[idx])
+}
+
 /// Parse CommonMark `source` into a [`ParsedPlan`].
 pub fn parse<ID, GEN>(source: &str, id_gen: &GEN) -> Result<ParsedPlan<ID>, ParseError>
 where
@@ -251,22 +319,17 @@ where
     let mut list_starts: Vec<usize> = Vec::new();
     let mut list_depth: usize = 0;
 
-    let mut heading_stack: Vec<(usize, String)> = Vec::new();
-    let mut current_set: Option<String> = None;
-    let mut plan_sets: Vec<String> = Vec::new();
-
-    let mut heading_pending: Option<usize> = None;
-    let mut heading_text = String::new();
+    let mut sets = SetTracker::default();
 
     for (event, range) in Parser::new_ext(source, gfm_options()).into_offset_iter() {
         match event {
             Event::Start(Tag::List(_)) => {
-                if let Some(&idx) = item_stack.last() {
-                    // A nested list ends the item's name line, whatever it turns out to be.
-                    let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth && cur.in_name_block {
-                        finalize_name(cur, source, range.start);
-                    }
+                // A nested list ends the item's name line, whatever it turns out to be.
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && list_depth == cur.list_depth
+                    && cur.in_name_block
+                {
+                    finalize_name(cur, source, range.start);
                 }
                 list_starts.push(raw_items.len());
                 list_depth += 1;
@@ -275,58 +338,33 @@ where
                 list_depth -= 1;
                 let first_item = list_starts.pop().expect("list stack balanced");
                 let item_count = raw_items.len();
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth {
-                        cur.children.push(ChildBlock::List {
-                            range,
-                            items: first_item..item_count,
-                        });
-                    }
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && list_depth == cur.list_depth
+                {
+                    cur.children.push(ChildBlock::List {
+                        range,
+                        items: first_item..item_count,
+                    });
                 }
             },
 
-            Event::Start(Tag::Heading { level, .. }) => {
-                if item_stack.is_empty() {
-                    heading_pending = Some(heading_level_num(level));
-                    heading_text.clear();
-                } else if let Some(&idx) = item_stack.last() {
-                    // A heading inside a list item is description content
-                    // (e.g. ASCII-art setext-lookalikes), not a set delimiter.
-                    let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth {
-                        if cur.in_name_block {
-                            finalize_name(cur, source, range.start);
-                        }
-                        cur.children.push(ChildBlock::Description(range));
+            // A heading inside a list item is description content
+            // (e.g. ASCII-art setext-lookalikes), not a set delimiter.
+            Event::Start(Tag::Heading { level, .. }) => match current_item(&mut raw_items, &item_stack) {
+                None => sets.open(level),
+                Some(cur) if list_depth == cur.list_depth => {
+                    if cur.in_name_block {
+                        finalize_name(cur, source, range.start);
                     }
-                }
+                    cur.children.push(ChildBlock::Description(range));
+                },
+                Some(_) => {},
             },
-            Event::End(TagEnd::Heading(_)) => {
-                if let Some(level) = heading_pending.take() {
-                    while let Some((top, _)) = heading_stack.last() {
-                        if *top >= level {
-                            heading_stack.pop();
-                        } else {
-                            break;
-                        }
-                    }
-                    heading_stack.push((level, heading_text.clone()));
-                    let set_name = heading_stack
-                        .iter()
-                        .map(|(_, heading)| heading.as_str())
-                        .collect::<Vec<_>>()
-                        .join("/");
-                    current_set = Some(set_name.clone());
-                    if !plan_sets.contains(&set_name) {
-                        plan_sets.push(set_name);
-                    }
-                }
-            },
+            Event::End(TagEnd::Heading(_)) => sets.close(),
 
             Event::Start(Tag::Item) => {
                 let mut item = RawItem::new(source, item_stack.last().copied(), range, list_depth);
-                item.set_name = current_set.clone();
+                item.set_name = sets.current.clone();
                 let idx = raw_items.len();
                 raw_items.push(item);
                 item_stack.push(idx);
@@ -341,50 +379,48 @@ where
             },
 
             Event::Start(Tag::Paragraph) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth && !cur.in_name_block {
-                        cur.children.push(ChildBlock::Description(range));
-                    }
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && list_depth == cur.list_depth
+                    && !cur.in_name_block
+                {
+                    cur.children.push(ChildBlock::Description(range));
                 }
             },
             Event::Start(Tag::CodeBlock(_)) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if list_depth == cur.list_depth {
-                        if cur.in_name_block {
-                            finalize_name(cur, source, range.start);
-                        }
-                        cur.children.push(ChildBlock::Description(range));
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && list_depth == cur.list_depth
+                {
+                    if cur.in_name_block {
+                        finalize_name(cur, source, range.start);
                     }
+                    cur.children.push(ChildBlock::Description(range));
                 }
             },
             // Only a loose list reports paragraphs; it bounds the name block exactly.
             Event::End(TagEnd::Paragraph) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    if cur.in_name_block {
-                        finalize_name(cur, source, range.end);
-                    }
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && cur.in_name_block
+                {
+                    finalize_name(cur, source, range.end);
                 }
             },
 
             Event::Text(text) => {
-                if heading_pending.is_some() {
-                    heading_text.push_str(text.as_ref());
+                if sets.is_open() {
+                    sets.push_text(text.as_ref());
                 }
             },
+            // Only a link opening the name line makes the issue a linked one;
+            // anywhere else it is part of the name or of the description.
             Event::Start(Tag::Link { dest_url, .. }) => {
-                if let Some(&idx) = item_stack.last() {
-                    let cur = &mut raw_items[idx];
-                    // Only a link opening the name line makes the issue a linked one;
-                    // anywhere else it is part of the name or of the description.
-                    if cur.in_name_block && cur.name_block.start == range.start {
-                        cur.link = Some(Filelink {
-                            range,
-                            dest: dest_url.into_string(),
-                        });
-                    }
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && cur.in_name_block
+                    && cur.name_block.start == range.start
+                {
+                    cur.link = Some(Filelink {
+                        range,
+                        dest: dest_url.into_string(),
+                    });
                 }
             },
 
@@ -411,7 +447,7 @@ where
     }
 
     let mut plan = Plan::new();
-    for set_name in &plan_sets {
+    for set_name in &sets.names {
         plan.add_set(IssueSet::new(set_name.clone()));
     }
 
@@ -542,7 +578,7 @@ fn finalize_item<ID>(cur: &mut RawItem<ID>, source: &str) {
         .filter(|span| !span.is_empty());
     let text = span
         .as_ref()
-        .map(|span| patch::dedent_lines(&source[span.clone()], cur.content_indent));
+        .map(|span| dedent_lines(&source[span.clone()], cur.content_indent));
 
     cur.content = match cur.link.take() {
         Some(link) => IssueContent::Linked {
@@ -558,6 +594,7 @@ fn finalize_item<ID>(cur: &mut RawItem<ID>, source: &str) {
 mod tests {
     use super::*;
     use crate::generator::IntIdGenerator;
+    use crate::patch;
 
     fn plan_of(src: &str) -> Plan<u64> {
         parse::<u64, _>(src, &IntIdGenerator::new(1)).unwrap().plan
