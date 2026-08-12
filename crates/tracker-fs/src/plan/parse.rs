@@ -75,16 +75,19 @@ fn heading_level_num(level: HeadingLevel) -> usize {
     }
 }
 
-/// Trim `range` to non-whitespace bounds; a leading `<digits><space>` prefix is
-/// consumed as the issue id.
+/// The `<digits><space>` prefix `name` opens with, if any — the reader takes it
+/// as the issue id rather than as part of the name.
+pub fn id_prefix(name: &str) -> Option<&str> {
+    let (prefix, _) = name.split_once(char::is_whitespace)?;
+    (!prefix.is_empty() && prefix.bytes().all(|byte| byte.is_ascii_digit())).then_some(prefix)
+}
+
+/// Trim `range` to non-whitespace bounds; an id prefix is consumed as the id.
 fn split_id_prefix<ID: FromStr>(source: &str, range: Range<usize>) -> (Option<ID>, Range<usize>) {
     let span = trim_span(source, range);
-    let Some((prefix, _)) = source[span.clone()].split_once(char::is_whitespace) else {
+    let Some(prefix) = id_prefix(&source[span.clone()]) else {
         return (None, span);
     };
-    if prefix.is_empty() || !prefix.bytes().all(|byte| byte.is_ascii_digit()) {
-        return (None, span);
-    }
     let rest = trim_span(source, span.start + prefix.len()..span.end);
     (ID::from_str(prefix).ok(), rest)
 }

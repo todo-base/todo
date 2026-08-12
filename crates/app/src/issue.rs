@@ -1,11 +1,13 @@
-use std::{fs, io};
+use std::io;
+use std::path::PathBuf;
 
 use todo_lib::id::HashedId;
 use todo_lib::issue::Issue;
+use todo_tracker_fs::config::FsProjectConfig;
 use todo_tracker_fs::generator::IntIdGenerator;
 use todo_tracker_fs::issue::SaveIssue;
-use todo_tracker_fs::plan::extract_md_todo_block;
-use todo_tracker_fs::plan::parse::parse as parse_plan;
+use todo_tracker_fs::plan::PlanSource;
+use todo_tracker_fs::plan::parse::{id_prefix, parse as parse_plan};
 use todo_tracker_fs::{Placement, patch, tracker};
 
 use crate::config::SourceConfig;
@@ -45,17 +47,38 @@ pub fn add<ID: HashedId + Default>(
     }
 
     let issue = Issue::new(0, name).with_content(content);
-    let project_root_dir = project_config.root_dir.unwrap_or_default();
-    let project_name = project_config.name;
-    let destination = config
-        .find_issues_placement(&project_root_dir, project_name.as_deref())
-        .unwrap_or_else(|| {
-            Placement::WholeFile(config.make_issues_file_path(project_root_dir, project_name.as_deref()))
-        });
+    let destination = issues_placement(&project_config, config);
 
     match order {
         Order::First => issue.add_first(&destination),
         Order::Last => issue.add_last(&destination),
+    }
+}
+
+/// Where the project keeps its issues: the placement that already exists, or the
+/// default issues file.
+fn issues_placement<ID: HashedId>(project_config: &FsProjectConfig<ID>, config: &SourceConfig) -> Placement<PathBuf> {
+    let root_dir = project_config.root_dir.clone().unwrap_or_default();
+    let project_name = project_config.name.as_deref();
+    config
+        .find_issues_placement(&root_dir, project_name)
+        .unwrap_or_else(|| Placement::WholeFile(config.make_issues_file_path(root_dir, project_name)))
+}
+
+/// An issue name is written back as the first line of its list item, so it has to
+/// survive a round trip through the reader.
+fn check_issue_name(name: &str) -> io::Result<()> {
+    let invalid = |reason| io::Error::new(io::ErrorKind::InvalidInput, format!("invalid issue name: {reason}"));
+    if name.trim().is_empty() {
+        Err(invalid("must not be empty".into()))
+    } else if name.contains(['\n', '\r']) {
+        Err(invalid("must be a single line".into()))
+    } else if let Some(prefix) = id_prefix(name) {
+        Err(invalid(format!(
+            "must not start with `{prefix}` — it would be read back as an issue id"
+        )))
+    } else {
+        Ok(())
     }
 }
 
@@ -67,59 +90,53 @@ pub fn rename<ID: HashedId + Default>(
     ProjectData::Fs(project_metadata): ProjectData<ID>,
     config: &SourceConfig,
     target_name: impl AsRef<str>,
-    new_name: &str,
+    new_name: impl AsRef<str>,
 ) -> io::Result<()> {
+    let new_name = new_name.as_ref();
+    check_issue_name(new_name)?;
+
     let (project_config, _) = project_metadata.into_config();
-    let project_root_dir = project_config.root_dir.unwrap_or_default();
-    let project_name = project_config.name;
     let start_id = project_config.start_id.unwrap_or(1);
-    let destination = config
-        .find_issues_placement(&project_root_dir, project_name.as_deref())
-        .unwrap_or_else(|| {
-            Placement::WholeFile(config.make_issues_file_path(project_root_dir, project_name.as_deref()))
-        });
+    let destination = issues_placement(&project_config, config);
 
     let path = destination.as_ref().as_path();
     let snapshot = patch::FileMetaSnapshot::capture(path)?;
-    let content = fs::read_to_string(path)?;
-    let (block_start, plan_src): (usize, &str) = match &destination {
-        Placement::WholeFile(_) => (0, content.as_str()),
-        Placement::CodeBlockInFile(_) => extract_md_todo_block(&content)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no `md todo` block"))?,
+    let Some(plan_source) = PlanSource::read(&destination)? else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("`{}` does not exist", path.display()),
+        ));
     };
-
-    let id_gen = IntIdGenerator::new(start_id);
-    let parsed = parse_plan::<u64, _>(plan_src, &id_gen)?;
+    let parsed = parse_plan::<u64, _>(plan_source.text(), &IntIdGenerator::new(start_id))?;
 
     let target = target_name.as_ref();
-    let candidates: Vec<_> = parsed
-        .plan
-        .issues()
-        .values()
-        .filter(|issue| issue.name == target)
-        .collect();
-    let id = match candidates.as_slice() {
-        [] => {
+    let mut matching = parsed.plan.issues().values().filter(|issue| issue.name == target);
+    let id = match (matching.next(), matching.next()) {
+        (Some(issue), None) => issue.id,
+        (Some(_), Some(_)) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("issue `{target}` is ambiguous; specify a unique name"),
+            ));
+        },
+        _ => {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("issue `{target}` not found"),
             ));
         },
-        [issue] => issue.id,
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("issue `{target}` is ambiguous; specify a unique name"),
-            ));
-        },
     };
+    if parsed.plan.issues().values().any(|issue| issue.name == new_name) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("issue `{new_name}` already exists"),
+        ));
+    }
 
     let name_span = parsed
         .name_spans
         .get(&id)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "issue has no name span"))?;
-    let file_span = (block_start + name_span.start)..(block_start + name_span.end);
-    let patched = patch::replace_range(&content, file_span, new_name);
-    patch::write_if_unchanged(path, &snapshot, &patched)?;
-    Ok(())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("issue `{target}` has no name span")))?;
+    let patched = patch::replace_range(plan_source.content(), plan_source.file_range(name_span), new_name);
+    patch::write_if_unchanged(path, &snapshot, &patched)
 }
