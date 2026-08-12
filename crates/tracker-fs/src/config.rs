@@ -124,13 +124,10 @@ impl<ID: SerializedId> FsProjectConfig<ID> {
     pub fn save(&self, destination: Placement<impl AsRef<Path>>) -> Result<(), SaveConfigError> {
         match destination {
             Placement::WholeFile(path) => {
+                // Nothing is read from the file, so there is no edit of someone
+                // else's to preserve: the config is serialized from memory.
                 let content = self.to_toml()?;
-                if path.as_ref().exists() {
-                    let snapshot = FileMetaSnapshot::capture(path.as_ref())?;
-                    write_if_unchanged(path, &snapshot, &content).map_err(Into::into)
-                } else {
-                    fs::write(path, content).map_err(Into::into)
-                }
+                fs::write(path, content).map_err(Into::into)
             },
             Placement::CodeBlockInFile(path) => {
                 let content = format!(

@@ -98,8 +98,7 @@ impl<ID> SaveIssue for Issue<ID> {
             Placement::WholeFile(path) => {
                 let mut file = fs::File::options().append(true).read(true).open(path)?;
 
-                let file_size = std::fs::metadata(path)?.len();
-                let needs_newline = if file_size > 0 {
+                let needs_newline = if snapshot.size() > 0 {
                     let mut reader = io::BufReader::new(&file);
                     reader.seek(io::SeekFrom::End(-1))?;
                     let mut last = [0];
@@ -109,7 +108,8 @@ impl<ID> SaveIssue for Issue<ID> {
                     false
                 };
 
-                // Refuse to append if the file changed since we snapshotted it.
+                // The handle was opened before this check, so it may point at a
+                // replaced file — the check sees that and nothing gets appended.
                 verify_unchanged(path, &snapshot)?;
                 if needs_newline {
                     file.write_all(b"\n")?;
