@@ -89,7 +89,7 @@ pub fn rename<ID: HashedId + Default>(
     };
 
     let id_gen = IntIdGenerator::new(start_id);
-    let parsed = parse_plan::<u64, _>(plan_src, &id_gen);
+    let parsed = parse_plan::<u64, _>(plan_src, &id_gen)?;
 
     let target = target_name.as_ref();
     let candidates: Vec<_> = parsed

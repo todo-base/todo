@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::io;
 use std::path::Path;
 use std::str::FromStr;
@@ -20,7 +21,7 @@ pub trait LoadProjectPlan<GEN> {
 
 impl<ID, GEN> LoadProjectPlan<GEN> for Plan<ID>
 where
-    ID: HashedId + Clone + PartialEq + FromStr,
+    ID: HashedId + Clone + PartialEq + Display + FromStr,
     GEN: IdGenerator<Id = ID> + Copy,
 {
     type Id = ID;
@@ -35,7 +36,7 @@ where
             Placement::WholeFile(_) => content.as_str(),
             Placement::CodeBlockInFile(_) => extract_md_todo_block(&content).map(|(_, block)| block).unwrap_or(""),
         };
-        let parsed = parse::parse::<ID, GEN>(plan_src, &id_generator);
+        let parsed = parse::parse::<ID, GEN>(plan_src, &id_generator)?;
         Ok(Some(parsed.plan))
     }
 }
