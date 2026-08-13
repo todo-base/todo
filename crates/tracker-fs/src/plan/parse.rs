@@ -2,7 +2,8 @@
 //! `pulldown-cmark`'s `OffsetIter`.
 //!
 //! Mapping:
-//! - list items (`-`/`*`/`+`) → issues
+//! - bullet list items (`-`/`*`/`+`) → issues; an ordered list (`1.`/`1)`) is ordinary content, and so is everything
+//!   nested under it
 //! - ATX headings (`#`) → sets (name = `/`-joined heading stack; an issue belongs to the heading scope active when it
 //!   appears)
 //! - first line of an item → issue name (numeric prefix → id); a `[name](file)` link opening that line →
@@ -183,20 +184,13 @@ fn dedent_lines(text: &str, indent: usize) -> String {
         .join("\n")
 }
 
-/// Offset an item's content starts at: past its list marker (`-`, `*`, `+`, `1.`,
-/// `1)`) and the spaces separating it from the content.
+/// Offset an item's content starts at: past its bullet marker (`-`, `*`, `+`) and
+/// the spaces separating it from the content.
 fn item_content_start(source: &str, item_start: usize) -> usize {
     let bytes = source.as_bytes();
     let mut offset = item_start;
     if matches!(bytes.get(offset), Some(b'-' | b'*' | b'+')) {
         offset += 1;
-    } else {
-        while bytes.get(offset).is_some_and(u8::is_ascii_digit) {
-            offset += 1;
-        }
-        if matches!(bytes.get(offset), Some(b'.' | b')')) {
-            offset += 1;
-        }
     }
     while matches!(bytes.get(offset), Some(b' ' | b'\t')) {
         offset += 1;
@@ -208,6 +202,14 @@ fn item_content_start(source: &str, item_start: usize) -> usize {
 struct Filelink {
     range: Range<usize>,
     dest: String,
+}
+
+/// A list the reader is inside.
+struct OpenList {
+    /// Index the first issue of this list took in `raw_items`.
+    first_item: usize,
+    /// An ordered list carries no issues, only content.
+    ordered: bool,
 }
 
 /// A direct-child block of an item, in document order.
@@ -316,14 +318,16 @@ where
 {
     let mut raw_items: Vec<RawItem<ID>> = Vec::new();
     let mut item_stack: Vec<usize> = Vec::new();
-    let mut list_starts: Vec<usize> = Vec::new();
+    let mut list_stack: Vec<OpenList> = Vec::new();
     let mut list_depth: usize = 0;
+    // Anything below an ordered list is content, however it is marked up.
+    let mut ordered_depth: usize = 0;
 
     let mut sets = SetTracker::default();
 
     for (event, range) in Parser::new_ext(source, gfm_options()).into_offset_iter() {
         match event {
-            Event::Start(Tag::List(_)) => {
+            Event::Start(Tag::List(first_number)) => {
                 // A nested list ends the item's name line, whatever it turns out to be.
                 if let Some(cur) = current_item(&mut raw_items, &item_stack)
                     && list_depth == cur.list_depth
@@ -331,19 +335,30 @@ where
                 {
                     finalize_name(cur, source, range.start);
                 }
-                list_starts.push(raw_items.len());
+                let ordered = first_number.is_some();
+                ordered_depth += usize::from(ordered);
+                list_stack.push(OpenList {
+                    first_item: raw_items.len(),
+                    ordered,
+                });
                 list_depth += 1;
             },
             Event::End(TagEnd::List(_)) => {
                 list_depth -= 1;
-                let first_item = list_starts.pop().expect("list stack balanced");
+                let list = list_stack.pop().expect("list stack balanced");
+                ordered_depth -= usize::from(list.ordered);
                 let item_count = raw_items.len();
                 if let Some(cur) = current_item(&mut raw_items, &item_stack)
                     && list_depth == cur.list_depth
                 {
-                    cur.children.push(ChildBlock::List {
-                        range,
-                        items: first_item..item_count,
+                    // Only a bullet list can hold subissues; an ordered one is content.
+                    cur.children.push(if list.ordered {
+                        ChildBlock::Description(range)
+                    } else {
+                        ChildBlock::List {
+                            range,
+                            items: list.first_item..item_count,
+                        }
                     });
                 }
             },
@@ -362,14 +377,14 @@ where
             },
             Event::End(TagEnd::Heading(_)) => sets.close(),
 
-            Event::Start(Tag::Item) => {
+            Event::Start(Tag::Item) if ordered_depth == 0 => {
                 let mut item = RawItem::new(source, item_stack.last().copied(), range, list_depth);
                 item.set_name = sets.current.clone();
                 let idx = raw_items.len();
                 raw_items.push(item);
                 item_stack.push(idx);
             },
-            Event::End(TagEnd::Item) => {
+            Event::End(TagEnd::Item) if ordered_depth == 0 => {
                 let idx = item_stack.pop().expect("item stack balanced");
                 let cur = &mut raw_items[idx];
                 if cur.in_name_block {
@@ -753,10 +768,35 @@ mod tests {
     }
 
     #[test]
-    fn ordered_marker_sets_the_content_indent() {
-        let plan = plan_of("1. first task\n   Multi line\n   description\n");
-        assert_eq!(plan.get_issue(&1).unwrap().name, "first task");
-        assert_content(&plan, 1, "Multi line\ndescription");
+    fn ordered_list_holds_no_issues() {
+        let plan = plan_of("Steps:\n1. first\n2. second\n\n- a task\n");
+        let names: Vec<&str> = plan.issues().values().map(|issue| issue.name.as_str()).collect();
+        assert_eq!(names, vec!["a task"]);
+    }
+
+    #[test]
+    fn ordered_list_inside_an_item_is_description() {
+        let plan = plan_of("- task\n  1. first\n  2. second\n");
+        let ids: Vec<u64> = plan.issues().keys().copied().collect();
+        assert_eq!(ids, vec![1]);
+        assert_content(&plan, 1, "1. first\n2. second");
+    }
+
+    #[test]
+    fn bullets_under_an_ordered_list_are_not_issues() {
+        let plan = plan_of("1. step\n   - not a task\n     - nor this\n");
+        assert_eq!(plan.issues().len(), 0);
+    }
+
+    #[test]
+    fn a_bullet_list_after_an_ordered_one_still_holds_issues() {
+        let plan = plan_of("- task\n  1. step\n\n  - subtask\n");
+        assert_eq!(*plan.get_issue(&1).unwrap(), {
+            let mut issue = Issue::new(1, "task").with_subissue(2);
+            issue.content = IssueContent::Inline("1. step".into());
+            issue
+        });
+        assert_eq!(plan.get_issue(&2).unwrap().name, "subtask");
     }
 
     #[test]

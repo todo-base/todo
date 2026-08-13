@@ -143,3 +143,36 @@ List items of 1 project
 - Some other task 4
 - final task
 ```
+
+## Ordered lists are prose, not issues
+
+Only bullet lists carry issues; a numbered list is ordinary content, and so is
+anything nested under it.
+
+```sh
+$ todo new "project C"
+    Creating `project C` project
+```
+
+```sh
+$ echo "- real task 1
+
+Command handling steps:
+1. read the arguments
+2. resolve the project
+   - not a task either
+
+- real task 2
+  1. a step of the task
+" > "project C/TODO.md"
+```
+
+```sh
+$ cd "project C"
+$ todo list
+List items of 1 project
+
+[project C]: 2
+- real task 1
+- real task 2
+```
