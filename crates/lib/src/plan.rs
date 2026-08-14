@@ -41,6 +41,14 @@ impl<ID: HashedId + PartialEq + Clone> Plan<ID> {
         &self.sets
     }
 
+    pub fn into_issues(self) -> IndexMap<ID, Issue<ID>> {
+        self.issues
+    }
+
+    pub fn into_sets(self) -> IndexMap<String, IssueSet<ID>> {
+        self.sets
+    }
+
     pub fn add_issue(&mut self, issue: Issue<ID>) {
         self.issues.insert(issue.id.clone(), issue);
     }

@@ -5,9 +5,12 @@ use std::path::Path;
 use todo_lib::issue::{Issue, IssueContent};
 
 use crate::Placement;
+use crate::patch::{FileMetaSnapshot, verify_unchanged, write_if_unchanged};
+use crate::plan::parse::ends_with_bullet_item;
 
 pub const MD_BLOCK_START: &str = "```md todo";
 pub const MD_BLOCK_END: &str = "```";
+pub const CONTENT_SEPARATOR: &str = "---";
 
 pub trait SaveIssue {
     type Id;
@@ -23,8 +26,8 @@ impl<ID> SaveIssue for Issue<ID> {
     fn to_text(&self) -> String {
         let name = &self.name;
         let title = match &self.content {
-            IssueContent::Empty | IssueContent::Inline(_) => name,
-            IssueContent::Linked { file: file_path, .. } => &format!("[{name}]({})", file_path.display()),
+            IssueContent::Empty | IssueContent::Inline(_) => name.to_string(),
+            IssueContent::Linked { file: file_path, .. } => format!("[{name}]({})", file_path.display()),
         };
         let mut text = format!("- {title}");
 
@@ -37,16 +40,22 @@ impl<ID> SaveIssue for Issue<ID> {
                 text.push_str("\n  ");
                 text.push_str(line);
             }
+            // Without it a description closing with a list would read back as subissues.
+            if ends_with_bullet_item(content) {
+                text.push_str("\n  ");
+                text.push_str(CONTENT_SEPARATOR);
+            }
         }
 
         text
     }
 
     fn add_first(&self, destination: &Placement<impl AsRef<Path>>) -> io::Result<()> {
-        if !destination.as_ref().as_ref().exists() {
-            fs::File::create(destination.as_ref())?;
+        let path: &Path = destination.as_ref().as_ref();
+        if !path.exists() {
+            fs::File::create(path)?;
         }
-
+        let snapshot = FileMetaSnapshot::capture(path)?;
         let text = self.to_text();
 
         match destination {
@@ -55,7 +64,7 @@ impl<ID> SaveIssue for Issue<ID> {
                 issues_content.insert(0, '\n');
                 issues_content.insert_str(0, &text);
 
-                fs::write(path, issues_content)?;
+                write_if_unchanged(path, &snapshot, &issues_content)?;
             },
             Placement::CodeBlockInFile(path) => {
                 let mut manifest_content = fs::read_to_string(path)?;
@@ -78,36 +87,40 @@ impl<ID> SaveIssue for Issue<ID> {
                     manifest_content.push_str(MD_BLOCK_END);
                     manifest_content.push('\n');
                 }
-                fs::write(path, manifest_content)?;
+                write_if_unchanged(path, &snapshot, &manifest_content)?;
             },
         }
         Ok(())
     }
 
     fn add_last(&self, destination: &Placement<impl AsRef<Path>>) -> io::Result<()> {
-        if !destination.as_ref().as_ref().exists() {
-            fs::File::create(destination.as_ref())?;
+        let path: &Path = destination.as_ref().as_ref();
+        if !path.exists() {
+            fs::File::create(path)?;
         }
-
+        let snapshot = FileMetaSnapshot::capture(path)?;
         let text = self.to_text();
 
         match destination {
             Placement::WholeFile(path) => {
                 let mut file = fs::File::options().append(true).read(true).open(path)?;
 
-                let file_size = std::fs::metadata(path)?.len();
-                if file_size > 0 {
+                let needs_newline = if snapshot.size() > 0 {
                     let mut reader = io::BufReader::new(&file);
                     reader.seek(io::SeekFrom::End(-1))?;
+                    let mut last = [0];
+                    reader.read_exact(&mut last)?;
+                    &last != b"\n"
+                } else {
+                    false
+                };
 
-                    let mut last_ch = [0];
-                    reader.read_exact(&mut last_ch)?;
-
-                    if &last_ch != b"\n" {
-                        file.write_all(b"\n")?;
-                    }
+                // The handle was opened before this check, so it may point at a
+                // replaced file — the check sees that and nothing gets appended.
+                verify_unchanged(path, &snapshot)?;
+                if needs_newline {
+                    file.write_all(b"\n")?;
                 }
-
                 file.write_all(text.as_bytes())?;
                 file.write_all(b"\n")?;
             },
@@ -137,7 +150,7 @@ impl<ID> SaveIssue for Issue<ID> {
                     manifest_content.push_str(MD_BLOCK_END);
                     manifest_content.push('\n');
                 }
-                fs::write(path, manifest_content)?;
+                write_if_unchanged(path, &snapshot, &manifest_content)?;
             },
         }
         Ok(())

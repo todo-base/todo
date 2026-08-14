@@ -31,6 +31,9 @@ pub enum Command {
     /// Add issue
     Add(AddIssue),
 
+    /// Rename issue
+    Rename(RenameIssue),
+
     /// List issues
     List(List),
 
@@ -78,6 +81,19 @@ pub struct AddIssue {
 
     /// The name of the issue
     pub issue: String,
+}
+
+#[derive(Parser, Clone)]
+pub struct RenameIssue {
+    /// The location of the project to rename issue (current directory project by default)
+    #[command(flatten)]
+    pub location: ProjectLocation,
+
+    /// The name of the issue to rename
+    pub name: String,
+
+    /// New name for the issue
+    pub new_name: String,
 }
 
 #[derive(Parser, Clone)]

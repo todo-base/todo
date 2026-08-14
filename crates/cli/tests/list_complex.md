@@ -19,22 +19,22 @@ $ echo "- To complete task 1
   - Subtask 3
 - Some other task 4
 
-args:
---project (-p)
---project-id
---project-name
---project-path
+  args:
+  --project (-p)
+  --project-id
+  --project-name
+  --project-path
 
-      UI         STORAGE
------------------------------
-|  cli  web  |  tracker-fs  |
-|  ...       |  tracker-db  |  INTERFACE
-|            |  ...         |
------------------------------
-|           app             |  APP LOGIC
------------------------------
-|           lib             |  DOMAIN
------------------------------
+        UI         STORAGE
+  -----------------------------
+  |  cli  web  |  tracker-fs  |
+  |  ...       |  tracker-db  |  INTERFACE
+  |            |  ...         |
+  -----------------------------
+  |           app             |  APP LOGIC
+  -----------------------------
+  |           lib             |  DOMAIN
+  -----------------------------
 
 - final task
 " > "project A/TODO.md"
@@ -64,22 +64,22 @@ name = "project B"
   - Subtask 3
 - Some other task 4
 
-args:
---project (-p)
---project-id
---project-name
---project-path
+  args:
+  --project (-p)
+  --project-id
+  --project-name
+  --project-path
 
-      UI         STORAGE
------------------------------
-|  cli  web  |  tracker-fs  |
-|  ...       |  tracker-db  |  INTERFACE
-|            |  ...         |
------------------------------
-|           app             |  APP LOGIC
------------------------------
-|           lib             |  DOMAIN
------------------------------
+        UI         STORAGE
+  -----------------------------
+  |  cli  web  |  tracker-fs  |
+  |  ...       |  tracker-db  |  INTERFACE
+  |            |  ...         |
+  -----------------------------
+  |           app             |  APP LOGIC
+  -----------------------------
+  |           lib             |  DOMAIN
+  -----------------------------
 
 - final task
 "# > "project B/project B.manifest.md"
@@ -142,4 +142,37 @@ List items of 1 project
 - Some other task 3
 - Some other task 4
 - final task
+```
+
+## Ordered lists are prose, not issues
+
+Only bullet lists carry issues; a numbered list is ordinary content, and so is
+anything nested under it.
+
+```sh
+$ todo new "project C"
+    Creating `project C` project
+```
+
+```sh
+$ echo "- real task 1
+
+Command handling steps:
+1. read the arguments
+2. resolve the project
+   - not a task either
+
+- real task 2
+  1. a step of the task
+" > "project C/TODO.md"
+```
+
+```sh
+$ cd "project C"
+$ todo list
+List items of 1 project
+
+[project C]: 2
+- real task 1
+- real task 2
 ```
