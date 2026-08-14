@@ -96,6 +96,21 @@ $ todo rename "child renamed" ""
 Error: invalid issue name: must not be empty
 ```
 
+```sh
+$ cd "project A"
+$ todo rename "child renamed" "[doc](notes.md)"
+    Renaming `child renamed` issue in `project A` project
+Error: invalid issue name: must not open with a `[...](...)` link — it would be read back as a file reference
+```
+
+## Renaming an issue to its own name is a no-op
+
+```sh
+$ cd "project A"
+$ todo rename "child renamed" "child renamed"
+    Renaming `child renamed` issue in `project A` project
+```
+
 ## Error: the new name is already taken
 
 ```sh

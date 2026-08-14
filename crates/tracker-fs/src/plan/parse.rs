@@ -35,7 +35,7 @@ use todo_lib::id::HashedId;
 use todo_lib::issue::{Issue, IssueContent, IssueSet};
 use todo_lib::plan::Plan;
 
-use crate::generator::IdGenerator;
+use crate::generator::{IdGenerator, IntIdGenerator};
 
 #[derive(Debug, Error)]
 pub enum ParseError {
@@ -51,6 +51,9 @@ impl From<ParseError> for io::Error {
 
 /// A parsed plan together with the byte spans its issues occupy in `source`, so
 /// an edit can rewrite one issue and leave the rest of the file byte-identical.
+///
+/// The spans describe the `source` it was parsed from: they go stale as soon as
+/// that text — or `plan` — changes, so patch one issue and parse again.
 pub struct ParsedPlan<ID> {
     pub plan: Plan<ID>,
     /// The whole list item, its subissues and description included.
@@ -195,6 +198,20 @@ pub fn is_bullet_item(line: &str) -> bool {
     } else {
         false
     }
+}
+
+/// Would `name`, written as an issue name, read back as a reference to a file
+/// rather than as plain text? Asks the reader itself, so the two cannot drift.
+pub fn reads_as_filelink(name: &str) -> bool {
+    let Ok(parsed) = parse::<u64, _>(&format!("- {name}"), &IntIdGenerator::new(1)) else {
+        return false;
+    };
+    parsed
+        .plan
+        .issues()
+        .values()
+        .next()
+        .is_some_and(|issue| matches!(issue.content, IssueContent::Linked { .. }))
 }
 
 /// Would the last block of `content` read back as a list of issues rather than as
@@ -466,7 +483,8 @@ where
                 }
             },
 
-            Event::Text(text) => {
+            // `Code` too: a set named `` # Mile `1` `` keeps the `1`.
+            Event::Text(text) | Event::Code(text) => {
                 if sets.is_open() {
                     sets.push_text(text.as_ref());
                 }
@@ -489,17 +507,30 @@ where
         }
     }
 
-    // Second pass: drop demoted items, assign ids, build Issues, link
-    // parent/subissue, attach sets.
+    let dropped = demoted_items(&raw_items);
+    let ids = assign_ids(&raw_items, &dropped, source, id_gen)?;
+    Ok(build_plan(raw_items, &ids, &sets.names, source))
+}
+
+/// Flags the items a demoted list produced: they are description text, not issues.
+fn demoted_items<ID>(raw_items: &[RawItem<ID>]) -> Vec<bool> {
     let mut dropped = vec![false; raw_items.len()];
-    for raw in &raw_items {
+    for raw in raw_items {
         for items in raw.demoted_lists() {
             dropped[items.clone()].fill(true);
         }
     }
+    dropped
+}
 
-    let ids = assign_ids(&raw_items, &dropped, source, id_gen)?;
-
+/// Turn the read items into a plan, skipping the ones without an id — those a
+/// demoted list produced.
+fn build_plan<ID: HashedId + Clone>(
+    raw_items: Vec<RawItem<ID>>,
+    ids: &[Option<ID>],
+    set_names: &IndexSet<String>,
+    source: &str,
+) -> ParsedPlan<ID> {
     let mut children: Vec<IndexSet<ID>> = vec![IndexSet::new(); raw_items.len()];
     for (index, raw) in raw_items.iter().enumerate() {
         if let (Some(parent_index), Some(id)) = (raw.parent_idx, &ids[index]) {
@@ -508,7 +539,7 @@ where
     }
 
     let mut plan = Plan::new();
-    for set_name in &sets.names {
+    for set_name in set_names {
         plan.add_set(IssueSet::new(set_name.clone()));
     }
 
@@ -520,16 +551,16 @@ where
             continue;
         };
         let mut issue = Issue::new(id.clone(), raw.name(source));
-        let (name_span, content_span) = (raw.name_span, raw.content_span);
         issue.parent_id = raw.parent_idx.and_then(|parent_index| ids[parent_index].clone());
         issue.content = raw.content;
         issue.subissues = child_set;
         plan.add_issue(issue);
+
         issue_spans.insert(id.clone(), raw.item_range);
-        if let Some(span) = name_span {
+        if let Some(span) = raw.name_span {
             name_spans.insert(id.clone(), span);
         }
-        if let Some(span) = content_span {
+        if let Some(span) = raw.content_span {
             content_spans.insert(id.clone(), span);
         }
         if let Some(set_name) = &raw.set_name {
@@ -537,12 +568,12 @@ where
         }
     }
 
-    Ok(ParsedPlan {
+    ParsedPlan {
         plan,
         issue_spans,
         name_spans,
         content_spans,
-    })
+    }
 }
 
 /// Ids of the items that stay, `None` for the ones demoted into a description.
@@ -684,6 +715,13 @@ mod tests {
         let plan = plan_of("- 25 named\n- auto\n");
         assert_eq!(plan.get_issue(&25).unwrap().name, "named");
         assert_eq!(plan.get_issue(&1).unwrap().name, "auto");
+    }
+
+    #[test]
+    fn heading_markup_stays_out_of_the_set_name() {
+        let plan = plan_of("# Mile `1` *и* [ссылка](x.md)\n\n- a\n");
+        let names: Vec<&str> = plan.sets().keys().map(|set_name| set_name.as_str()).collect();
+        assert_eq!(names, vec!["Mile 1 и ссылка"]);
     }
 
     #[test]

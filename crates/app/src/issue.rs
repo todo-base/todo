@@ -7,7 +7,7 @@ use todo_tracker_fs::config::FsProjectConfig;
 use todo_tracker_fs::generator::IntIdGenerator;
 use todo_tracker_fs::issue::SaveIssue;
 use todo_tracker_fs::plan::PlanSource;
-use todo_tracker_fs::plan::parse::{id_prefix, parse as parse_plan};
+use todo_tracker_fs::plan::parse::{id_prefix, parse as parse_plan, reads_as_filelink};
 use todo_tracker_fs::{Placement, patch, tracker};
 
 use crate::config::SourceConfig;
@@ -77,6 +77,10 @@ fn check_issue_name(name: &str) -> io::Result<()> {
         Err(invalid(format!(
             "must not start with `{prefix}` — it would be read back as an issue id"
         )))
+    } else if reads_as_filelink(name) {
+        Err(invalid(
+            "must not open with a `[...](...)` link — it would be read back as a file reference".into(),
+        ))
     } else {
         Ok(())
     }
@@ -126,7 +130,13 @@ pub fn rename<ID: HashedId + Default>(
             ));
         },
     };
-    if parsed.plan.issues().values().any(|issue| issue.name == new_name) {
+    // The issue being renamed is not in its own way.
+    if parsed
+        .plan
+        .issues()
+        .values()
+        .any(|issue| issue.id != id && issue.name == new_name)
+    {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             format!("issue `{new_name}` already exists"),

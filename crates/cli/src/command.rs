@@ -105,7 +105,7 @@ pub fn rename_issue(location: ProjectLocation, name: String, new_name: String, c
 
     outln!("    Renaming `{name}` issue in `{}` project", project_metadata.name());
 
-    issue::rename(ProjectData::Fs(project_metadata), &config.source, name, &new_name)?;
+    issue::rename(ProjectData::Fs(project_metadata), &config.source, name, new_name)?;
     Ok(())
 }
 
