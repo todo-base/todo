@@ -103,7 +103,10 @@ fn locate_project(location: ProjectLocation, config: &Config) -> anyhow::Result<
 pub fn rename_issue(location: ProjectLocation, name: String, new_name: String, config: &Config) -> anyhow::Result<()> {
     let project_metadata = locate_project(location, config)?;
 
-    outln!("    Renaming `{name}` issue in `{}` project", project_metadata.name());
+    outln!(
+        "    Renaming `{name}` issue to `{new_name}` in `{}` project",
+        project_metadata.name()
+    );
 
     issue::rename(ProjectData::Fs(project_metadata), &config.source, name, new_name)?;
     Ok(())

@@ -18,7 +18,7 @@ $ todo add "task 1"
 ```sh
 $ cd "project A"
 $ todo rename "task 1" "renamed task"
-    Renaming `task 1` issue in `project A` project
+    Renaming `task 1` issue to `renamed task` in `project A` project
 ```
 
 ```sh
@@ -42,7 +42,7 @@ $ echo "- parent task
 ```sh
 $ cd "project A"
 $ todo rename "parent task" "**renamed** parent"
-    Renaming `parent task` issue in `project A` project
+    Renaming `parent task` issue to `**renamed** parent` in `project A` project
 ```
 
 ```sh
@@ -59,7 +59,7 @@ $ cat "project A/TODO.md"
 ```sh
 $ cd "project A"
 $ todo rename "child task" "child renamed"
-    Renaming `child task` issue in `project A` project
+    Renaming `child task` issue to `child renamed` in `project A` project
 ```
 
 ```sh
@@ -76,7 +76,7 @@ $ cat "project A/TODO.md"
 ```sh
 $ cd "project A"
 $ todo rename "nope" "x"
-    Renaming `nope` issue in `project A` project
+    Renaming `nope` issue to `x` in `project A` project
 Error: issue `nope` not found
 ```
 
@@ -85,21 +85,21 @@ Error: issue `nope` not found
 ```sh
 $ cd "project A"
 $ todo rename "child renamed" "12 boom"
-    Renaming `child renamed` issue in `project A` project
+    Renaming `child renamed` issue to `12 boom` in `project A` project
 Error: invalid issue name: must not start with `12` — it would be read back as an issue id
 ```
 
 ```sh
 $ cd "project A"
 $ todo rename "child renamed" ""
-    Renaming `child renamed` issue in `project A` project
+    Renaming `child renamed` issue to `` in `project A` project
 Error: invalid issue name: must not be empty
 ```
 
 ```sh
 $ cd "project A"
 $ todo rename "child renamed" "[doc](notes.md)"
-    Renaming `child renamed` issue in `project A` project
+    Renaming `child renamed` issue to `[doc](notes.md)` in `project A` project
 Error: invalid issue name: must not open with a `[...](...)` link — it would be read back as a file reference
 ```
 
@@ -108,7 +108,7 @@ Error: invalid issue name: must not open with a `[...](...)` link — it would b
 ```sh
 $ cd "project A"
 $ todo rename "child renamed" "child renamed"
-    Renaming `child renamed` issue in `project A` project
+    Renaming `child renamed` issue to `child renamed` in `project A` project
 ```
 
 ## Error: the new name is already taken
@@ -116,7 +116,7 @@ $ todo rename "child renamed" "child renamed"
 ```sh
 $ cd "project A"
 $ todo rename "child renamed" "numbered"
-    Renaming `child renamed` issue in `project A` project
+    Renaming `child renamed` issue to `numbered` in `project A` project
 Error: issue `numbered` already exists
 ```
 
@@ -136,7 +136,7 @@ $ todo add "task one"
 ```sh
 $ cd "project B"
 $ todo rename "task one" "renamed one"
-    Renaming `task one` issue in `project B` project
+    Renaming `task one` issue to `renamed one` in `project B` project
 ```
 
 ````sh
