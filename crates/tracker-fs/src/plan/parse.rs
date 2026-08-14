@@ -12,7 +12,8 @@
 //!   dedented to the item's content indent
 //! - nested lists closing an item → its subissues; a nested list with description content after it stays part of that
 //!   description and yields no issues
-//! - thematic break (`---`) → ignored (decorative)
+//! - thematic break (`---`) → ignored between issues; indented to an item's content it is description text like any
+//!   other block, and it ends the subissues, so a list right before it stays content
 //!
 //! An id spelled out in the source is never handed to another issue: generated
 //! ids skip the ones the source already claims, and spelling the same id out
@@ -184,12 +185,37 @@ fn dedent_lines(text: &str, indent: usize) -> String {
         .join("\n")
 }
 
+/// Markers that open a list item carrying an issue.
+const BULLET_MARKERS: [char; 3] = ['-', '*', '+'];
+
+/// Does `line` open a bullet list item — the markup a reader takes for an issue?
+pub fn is_bullet_item(line: &str) -> bool {
+    if let Some(rest) = line.trim_start().strip_prefix(BULLET_MARKERS) {
+        rest.is_empty() || rest.starts_with([' ', '\t'])
+    } else {
+        false
+    }
+}
+
+/// Would the last block of `content` read back as a list of issues rather than as
+/// description text? A writer has to close such content with a `---`.
+pub fn ends_with_bullet_item(content: &str) -> bool {
+    content
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(is_bullet_item)
+}
+
 /// Offset an item's content starts at: past its bullet marker (`-`, `*`, `+`) and
 /// the spaces separating it from the content.
 fn item_content_start(source: &str, item_start: usize) -> usize {
     let bytes = source.as_bytes();
     let mut offset = item_start;
-    if matches!(bytes.get(offset), Some(b'-' | b'*' | b'+')) {
+    if bytes
+        .get(offset)
+        .is_some_and(|&byte| BULLET_MARKERS.contains(&byte.into()))
+    {
         offset += 1;
     }
     while matches!(bytes.get(offset), Some(b' ' | b'\t')) {
@@ -214,7 +240,7 @@ struct OpenList {
 
 /// A direct-child block of an item, in document order.
 enum ChildBlock {
-    /// Description content: a paragraph, a code block, a heading, …
+    /// Description content: a paragraph, a code block, a heading, a `---`, …
     Description(Range<usize>),
     /// A nested list, along with the [`RawItem`] indices it produced.
     List { range: Range<usize>, items: Range<usize> },
@@ -279,7 +305,7 @@ impl<ID> RawItem<ID> {
         self.subissue_split = self
             .children
             .iter()
-            .rposition(|block| matches!(block, ChildBlock::Description(_)))
+            .rposition(|block| !matches!(block, ChildBlock::List { .. }))
             .map_or(0, |idx| idx + 1);
     }
 
@@ -367,6 +393,13 @@ where
             // (e.g. ASCII-art setext-lookalikes), not a set delimiter.
             Event::Start(Tag::Heading { level, .. }) => match current_item(&mut raw_items, &item_stack) {
                 None => sets.open(level),
+                // A setext heading opens at the item's first line, so that line is
+                // still the name and only its underline joins the description.
+                Some(cur)
+                    if list_depth == cur.list_depth && cur.in_name_block && cur.name_block.start == range.start =>
+                {
+                    finalize_name(cur, source, range.end);
+                },
                 Some(cur) if list_depth == cur.list_depth => {
                     if cur.in_name_block {
                         finalize_name(cur, source, range.start);
@@ -376,6 +409,19 @@ where
                 Some(_) => {},
             },
             Event::End(TagEnd::Heading(_)) => sets.close(),
+
+            // A `---` indented to the item's content is description text like any
+            // other block; it also ends the subissues, keeping a list before it content.
+            Event::Rule => {
+                if let Some(cur) = current_item(&mut raw_items, &item_stack)
+                    && list_depth == cur.list_depth
+                {
+                    if cur.in_name_block {
+                        finalize_name(cur, source, range.start);
+                    }
+                    cur.children.push(ChildBlock::Description(range));
+                }
+            },
 
             Event::Start(Tag::Item) if ordered_depth == 0 => {
                 let mut item = RawItem::new(source, item_stack.last().copied(), range, list_depth);
@@ -822,6 +868,45 @@ mod tests {
             issue
         });
         assert_eq!(*plan.get_issue(&2).unwrap(), Issue::new(2, "sub2").with_parent_id(1));
+    }
+
+    #[test]
+    fn separator_keeps_a_closing_list_in_the_description() {
+        let plan = plan_of("- task\n  intro:\n  - alpha\n  - beta\n  ---\n");
+        let ids: Vec<u64> = plan.issues().keys().copied().collect();
+        assert_eq!(ids, vec![1], "the closed list yields no issues");
+        assert_content(&plan, 1, "intro:\n- alpha\n- beta\n---");
+    }
+
+    #[test]
+    fn separator_is_shown_wherever_the_file_has_it() {
+        assert_content(&plan_of("- task\n\n  ---\n"), 1, "---");
+        assert_content(&plan_of("- task\n  ---\n"), 1, "---");
+        assert_content(
+            &plan_of("- task\n\n  above\n\n  ---\n\n  below\n"),
+            1,
+            "above\n\n---\n\nbelow",
+        );
+    }
+
+    #[test]
+    fn separator_under_the_name_line_stays_out_of_the_name() {
+        let source = "- task\n  ---\n- next\n";
+        let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1)).unwrap();
+        assert_eq!(parsed.plan.get_issue(&1).unwrap().name, "task");
+        assert_eq!(&source[parsed.name_spans[&1].clone()], "task");
+        assert_eq!(parsed.plan.get_issue(&2).unwrap().name, "next");
+    }
+
+    #[test]
+    fn editing_the_description_takes_its_separator_along() {
+        let source = "- task\n  intro:\n  - alpha\n  ---\n- next\n";
+        let parsed = parse::<u64, _>(source, &IntIdGenerator::new(1)).unwrap();
+        assert_content(&parsed.plan, 1, "intro:\n- alpha\n---");
+        assert_eq!(&source[parsed.content_spans[&1].clone()], "intro:\n  - alpha\n  ---");
+
+        let edited = patch::replace_range(source, parsed.content_spans[&1].clone(), "just text");
+        assert_eq!(edited, "- task\n  just text\n- next\n");
     }
 
     #[test]

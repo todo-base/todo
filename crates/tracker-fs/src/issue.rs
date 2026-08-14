@@ -6,9 +6,11 @@ use todo_lib::issue::{Issue, IssueContent};
 
 use crate::Placement;
 use crate::patch::{FileMetaSnapshot, verify_unchanged, write_if_unchanged};
+use crate::plan::parse::ends_with_bullet_item;
 
 pub const MD_BLOCK_START: &str = "```md todo";
 pub const MD_BLOCK_END: &str = "```";
+pub const CONTENT_SEPARATOR: &str = "---";
 
 pub trait SaveIssue {
     type Id;
@@ -37,6 +39,11 @@ impl<ID> SaveIssue for Issue<ID> {
             for line in content.lines() {
                 text.push_str("\n  ");
                 text.push_str(line);
+            }
+            // Without it a description closing with a list would read back as subissues.
+            if ends_with_bullet_item(content) {
+                text.push_str("\n  ");
+                text.push_str(CONTENT_SEPARATOR);
             }
         }
 
